@@ -1302,6 +1302,7 @@
 ### Added
 
 - Added per-block fullscreen mouse expansion for thinking sections and tool results, while preserving drag selection and link activation.
+- Added `DefaultSystemPrompt.md` support for replacing the built-in default identity while preserving Pi's tools, guidelines, documentation, and project context.
 - Added fullscreen transcript search with `Ctrl+Shift+F`, incremental match highlighting, configurable search match theme colors, and next/previous navigation with `Enter`/`Ctrl+G` and `Shift+Enter`/`Ctrl+Shift+G`.
 - Added experimental strict JSON-schema constrained sampling for the default `read`, `bash`, `edit`, and `write` tools under `PI_EXPERIMENTAL=1`.
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.

@@ -627,6 +627,27 @@ Project skill content`,
 			expect(loader.getThemes().themes.some((theme) => theme.name === "project-theme")).toBe(false);
 		});
 
+		it("should discover global DefaultSystemPrompt.md", async () => {
+			writeFileSync(join(agentDir, "DefaultSystemPrompt.md"), "Custom default identity.");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			expect(loader.getDefaultSystemPrompt()).toBe("Custom default identity.");
+		});
+
+		it("should prefer trusted project DefaultSystemPrompt.md", async () => {
+			const piDir = join(cwd, ".pi");
+			mkdirSync(piDir, { recursive: true });
+			writeFileSync(join(agentDir, "DefaultSystemPrompt.md"), "Global default identity.");
+			writeFileSync(join(piDir, "DefaultSystemPrompt.md"), "Project default identity.");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			expect(loader.getDefaultSystemPrompt()).toBe("Project default identity.");
+		});
+
 		it("should discover APPEND_SYSTEM.md", async () => {
 			const piDir = join(cwd, ".pi");
 			mkdirSync(piDir, { recursive: true });

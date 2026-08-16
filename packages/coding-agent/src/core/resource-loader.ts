@@ -188,6 +188,7 @@ export interface ResourceLoader {
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> };
 	getSystemPrompt(): string | undefined;
 	getSystemPromptSource(): { path: string } | undefined;
+	getDefaultSystemPrompt?(): string | undefined;
 	getAppendSystemPrompt(): string[];
 	getAppendSystemPromptSources(): Array<{ path: string }>;
 	extendResources(paths: ResourceExtensionPaths): void;
@@ -395,6 +396,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private agentsFiles: Array<{ path: string; content: string }>;
 	private systemPrompt?: string;
 	private systemPromptSourcePath?: string;
+	private defaultSystemPrompt?: string;
 	private appendSystemPrompt: string[];
 	private appendSystemPromptSourcePaths: string[];
 	private lastSkillPaths: string[];
@@ -488,6 +490,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	getSystemPromptSource(): { path: string } | undefined {
 		return this.systemPromptSourcePath ? { path: this.systemPromptSourcePath } : undefined;
+	}
+
+	getDefaultSystemPrompt(): string | undefined {
+		return this.defaultSystemPrompt;
 	}
 
 	getAppendSystemPrompt(): string[] {
@@ -699,6 +705,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.systemPrompt = this.systemPromptOverride ? this.systemPromptOverride(baseSystemPrompt) : baseSystemPrompt;
 		this.systemPromptSourcePath =
 			systemPromptSource && existsSync(systemPromptSource) ? resolvePath(systemPromptSource) : undefined;
+
+		this.defaultSystemPrompt = resolvePromptInput(this.discoverDefaultSystemPromptFile(), "default system prompt");
 
 		let appendSources = this.appendSystemPromptSource;
 		if (!appendSources) {
@@ -1257,6 +1265,20 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 
 		const globalPath = join(this.agentDir, "SYSTEM.md");
+		if (existsSync(globalPath)) {
+			return globalPath;
+		}
+
+		return undefined;
+	}
+
+	private discoverDefaultSystemPromptFile(): string | undefined {
+		const projectPath = join(this.cwd, CONFIG_DIR_NAME, "DefaultSystemPrompt.md");
+		if (this.settingsManager.isProjectTrusted() && existsSync(projectPath)) {
+			return projectPath;
+		}
+
+		const globalPath = join(this.agentDir, "DefaultSystemPrompt.md");
 		if (existsSync(globalPath)) {
 			return globalPath;
 		}

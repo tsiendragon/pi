@@ -24,6 +24,8 @@ export interface BuildSystemPromptOptions {
 	toolGuidelines?: Record<string, string[]>;
 	/** Additional guideline bullets appended to the default system prompt rules. */
 	promptGuidelines?: string[];
+	/** Text that replaces Pi's built-in default identity paragraph. */
+	defaultSystemPrompt?: string;
 	/** Text appended from user configuration before project context, skills, and cwd. */
 	appendSystemPrompt?: string;
 	/** Additional XML-wrapped prompt sections keyed by tag name. */
@@ -42,6 +44,7 @@ export type NormalizedBuildSystemPromptOptions = BuildSystemPromptOptions & {
 	toolSnippets: Record<string, string>;
 	toolGuidelines: Record<string, string[]>;
 	promptGuidelines: string[];
+	defaultSystemPrompt?: string;
 	appendSystemPrompt: string;
 	sections: Record<string, string>;
 	contextFiles: Array<{ path: string; content: string }>;
@@ -68,6 +71,7 @@ export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptOption
 			Object.entries(input.toolGuidelines ?? {}).map(([name, guidelines]) => [name, [...guidelines]]),
 		),
 		promptGuidelines: [...(input.promptGuidelines ?? [])],
+		defaultSystemPrompt: input.defaultSystemPrompt,
 		appendSystemPrompt: input.appendSystemPrompt ?? "",
 		sections: { ...(input.sections ?? {}) },
 		cwd: input.cwd,
@@ -134,6 +138,7 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 		toolSnippets,
 		toolGuidelines,
 		promptGuidelines,
+		defaultSystemPrompt,
 		appendSystemPrompt,
 		sections: customSections,
 		cwd,
@@ -153,6 +158,7 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 		promptSections.preamble = customPrompt;
 	} else {
 		promptSections.preamble =
+			defaultSystemPrompt?.trim() ||
 			"You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.";
 		const visibleTools = declaredTools.filter((name) => !!toolSnippets[name]);
 		const tools =
