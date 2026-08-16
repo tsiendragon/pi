@@ -11,6 +11,27 @@ afterEach(() => {
 });
 
 describe("Editor prompt history keybindings", () => {
+	it("distinguishes legacy Enter from a Ctrl+J submit binding", () => {
+		setKeybindings(
+			new KeybindingsManager(TUI_KEYBINDINGS, {
+				"tui.input.newLine": ["enter", "shift+enter"],
+				"tui.input.submit": "ctrl+j",
+			}),
+		);
+		const editor = new Editor(new TuiMainScreen(new VirtualTerminal()), defaultEditorTheme);
+		const submitted: string[] = [];
+		editor.onSubmit = (text) => submitted.push(text);
+
+		editor.setText("first line");
+		editor.handleInput("\r");
+		assert.strictEqual(editor.getText(), "first line\n");
+
+		editor.setText("send me");
+		editor.handleInput("\n");
+		assert.deepStrictEqual(submitted, ["send me"]);
+		assert.strictEqual(editor.getText(), "");
+	});
+
 	it("browses history directly without first moving the cursor", () => {
 		setKeybindings(
 			new KeybindingsManager(TUI_KEYBINDINGS, {

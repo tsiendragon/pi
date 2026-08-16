@@ -15,7 +15,7 @@ import {
 	VIEWPORT_TUI,
 	type ViewportTUI,
 } from "./tui.ts";
-import { sliceByColumn, visibleWidth } from "./utils.ts";
+import { sliceByColumn, truncateToWidth, visibleWidth } from "./utils.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
@@ -727,7 +727,7 @@ export class TuiMainScreen extends TuiBase implements ViewportTUI {
 		const renderEnd = Math.min(lastChanged, newLines.length - 1);
 		for (let i = firstChanged; i <= renderEnd; i++) {
 			if (i > firstChanged) output.append("\r\n");
-			const line = newLines[i];
+			let line = newLines[i];
 			const isImage = isImageLine(line);
 			const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i, renderEnd) : 1;
 			if (imageReservedRows > 1) {
@@ -753,32 +753,10 @@ export class TuiMainScreen extends TuiBase implements ViewportTUI {
 
 			output.append("\x1b[2K"); // Clear current line
 			if (!isImage && visibleWidth(line) > width) {
-				// Log all lines to crash file for debugging
-				const crashLogPath = path.join(this.logDirectory ?? os.tmpdir(), "pi-tui-crash.log");
-				const crashData = [
-					`Crash at ${new Date().toISOString()}`,
-					`Terminal width: ${width}`,
-					`Line ${i} visible width: ${visibleWidth(line)}`,
-					"",
-					"=== All rendered lines ===",
-					...newLines.map((l, idx) => `[${idx}] (w=${visibleWidth(l)}) ${l}`),
-					"",
-				].join("\n");
-				fs.mkdirSync(path.dirname(crashLogPath), { recursive: true });
-				fs.writeFileSync(crashLogPath, crashData);
-
-				// Clean up terminal state before throwing
-				this.stop();
-
-				const errorMsg = [
-					`Rendered line ${i} exceeds terminal width (${visibleWidth(line)} > ${width}).`,
-					"",
-					"This is likely caused by a custom TUI component not truncating its output.",
-					"Use visibleWidth() to measure and truncateToWidth() to truncate lines.",
-					"",
-					`Debug log written to: ${crashLogPath}`,
-				].join("\n");
-				throw new Error(errorMsg);
+				// A component may calculate wide Unicode glyphs incorrectly. The final
+				// rendering boundary must be fault-tolerant: safely clip the line rather
+				// than terminating the entire interactive session.
+				line = truncateToWidth(line, width, "");
 			}
 			output.append(line);
 		}

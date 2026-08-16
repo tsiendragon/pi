@@ -897,9 +897,9 @@ export class InteractiveMode {
 			this.widgetContainerAboveStatus,
 			this.statusContainer,
 			this.widgetContainerAbove,
+			this.footerContainer,
 			this.editorContainer,
 			this.widgetContainerBelow,
-			this.footerContainer,
 		]);
 		// Accept text while startup completes, but only enable interrupt, exit, and submission feedback.
 		this.defaultEditor.onAction("app.clear", () => this.handleCtrlC());

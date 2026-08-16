@@ -919,7 +919,6 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 			if (modifier === 0) {
 				return (
 					data === "\r" ||
-					(!_kittyProtocolActive && data === "\n") ||
 					data === "\x1bOM" || // SS3 M (numpad enter in some terminals)
 					matchesKittySequence(data, CODEPOINTS.enter, 0) ||
 					matchesKittySequence(data, CODEPOINTS.kpEnter, 0)
@@ -1280,7 +1279,7 @@ export function parseKey(data: string): string | undefined {
 	if (data === "\x1b\x1d") return "ctrl+alt+]";
 	if (data === "\x1b\x1f") return "ctrl+alt+-";
 	if (data === "\t") return "tab";
-	if (data === "\r" || (!_kittyProtocolActive && data === "\n") || data === "\x1bOM") return "enter";
+	if (data === "\r" || data === "\x1bOM") return "enter";
 	if (data === "\x00") return "ctrl+space";
 	if (data === " ") return "space";
 	if (data === "\x7f") return "backspace";

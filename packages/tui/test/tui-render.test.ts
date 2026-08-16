@@ -182,6 +182,19 @@ describe("regular fixed layout", () => {
 });
 
 describe("TUI render scheduling", () => {
+	it("clips an over-wide component line instead of terminating the TUI", async () => {
+		const terminal = new VirtualTerminal(10, 4);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		component.lines = ["1234567890🙂"];
+		tui.addChild(component);
+		tui.start();
+		await terminal.waitForRender();
+
+		assert.strictEqual(terminal.getViewport()[0], "1234567890");
+		tui.stop();
+	});
+
 	it("renders keyboard input without waiting for a throttled frame", async () => {
 		const terminal = new VirtualTerminal(40, 10);
 		const tui: TUI = new TuiMainScreen(terminal);
