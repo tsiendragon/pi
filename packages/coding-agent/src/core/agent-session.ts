@@ -1246,6 +1246,7 @@ export class AgentSession {
 		}
 
 		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
+		const loaderDefaultSystemPrompt = this._resourceLoader.getDefaultSystemPrompt?.();
 		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();
 		const appendSystemPrompt =
 			loaderAppendSystemPrompt.length > 0 ? loaderAppendSystemPrompt.join("\n\n") : undefined;
@@ -1257,6 +1258,7 @@ export class AgentSession {
 			skills: loadedSkills,
 			contextFiles: loadedContextFiles,
 			customPrompt: loaderSystemPrompt,
+			defaultSystemPrompt: loaderDefaultSystemPrompt,
 			appendSystemPrompt,
 			selectedTools: validToolNames,
 			toolSnippets,

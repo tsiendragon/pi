@@ -112,6 +112,55 @@ describe("buildSystemPrompt", () => {
 		});
 	});
 
+	describe("default system prompt", () => {
+		test("replaces the built-in identity and leads the assembled default prompt", () => {
+			const defaultSystemPrompt = "# XDOC Agent\n\nComplete the business task.";
+			const prompt = buildSystemPrompt({
+				defaultSystemPrompt,
+				selectedTools: ["read"],
+				toolSnippets: { read: "Read files" },
+				contextFiles: [{ path: "/repo/AGENTS.md", content: "Project instructions" }],
+				skills: [
+					{
+						name: "example",
+						description: "Example skill",
+						filePath: "/skills/example/SKILL.md",
+						baseDir: "/skills/example",
+						sourceInfo: createSyntheticSourceInfo("/skills/example/SKILL.md", { source: "test" }),
+						disableModelInvocation: false,
+					},
+				],
+				cwd: "/repo",
+			});
+
+			expect(prompt.startsWith(`${defaultSystemPrompt}\n\nAvailable tools:`)).toBe(true);
+			expect(prompt).not.toContain("You are an expert coding assistant operating inside pi");
+			expect(prompt.match(/# XDOC Agent/g)).toHaveLength(1);
+			expect(prompt.indexOf("Available tools:")).toBeLessThan(prompt.indexOf("<project_context>"));
+			expect(prompt.indexOf("<project_context>")).toBeLessThan(prompt.indexOf("<available_skills>"));
+		});
+
+		test("keeps the built-in identity when no default prompt is provided", () => {
+			const prompt = buildSystemPrompt({ contextFiles: [], skills: [], cwd: "/repo" });
+
+			expect(prompt).toContain("You are an expert coding assistant operating inside pi");
+		});
+
+		test("preserves append-system-prompt placement after the Pi documentation", () => {
+			const prompt = buildSystemPrompt({
+				defaultSystemPrompt: "# Default identity",
+				appendSystemPrompt: "# Appended instructions",
+				contextFiles: [{ path: "/repo/AGENTS.md", content: "Project instructions" }],
+				skills: [],
+				cwd: "/repo",
+			});
+
+			expect(prompt.indexOf("# Default identity")).toBe(0);
+			expect(prompt.indexOf("Pi documentation")).toBeLessThan(prompt.indexOf("# Appended instructions"));
+			expect(prompt.indexOf("# Appended instructions")).toBeLessThan(prompt.indexOf("<project_context>"));
+		});
+	});
+
 	describe("prompt guidelines", () => {
 		test("appends promptGuidelines to default guidelines", () => {
 			const prompt = buildSystemPrompt({

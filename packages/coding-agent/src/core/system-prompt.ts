@@ -14,6 +14,8 @@ export interface BuildSystemPromptOptions {
 	toolSnippets?: Record<string, string>;
 	/** Additional guideline bullets appended to the default system prompt guidelines. */
 	promptGuidelines?: string[];
+	/** Text that replaces Pi's built-in default identity paragraph. */
+	defaultSystemPrompt?: string;
 	/** Text to append to system prompt. */
 	appendSystemPrompt?: string;
 	/** Working directory. */
@@ -31,6 +33,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		selectedTools,
 		toolSnippets,
 		promptGuidelines,
+		defaultSystemPrompt,
 		appendSystemPrompt,
 		cwd,
 		contextFiles: providedContextFiles,
@@ -39,6 +42,9 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const promptCwd = cwd.replace(/\\/g, "/");
 
 	const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : "";
+	const defaultIdentity =
+		"You are an expert coding assistant operating inside pi, a coding agent harness. " +
+		"You help users by reading files, executing commands, editing code, and writing new files.";
 
 	const contextFiles = providedContextFiles ?? [];
 	const skills = providedSkills ?? [];
@@ -124,7 +130,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 	const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
 
-	let prompt = `You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+	let prompt = `${defaultSystemPrompt?.trim() || defaultIdentity}
 
 Available tools:
 ${toolsList}
