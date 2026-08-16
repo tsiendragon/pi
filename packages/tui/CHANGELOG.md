@@ -9,6 +9,8 @@
 
 ### Fixed
 
+- Fixed over-wide component output terminating the TUI instead of clipping safely to the terminal width.
+- Distinguished legacy `Ctrl+J` input from Enter so custom submit bindings work.
 - Fixed `SettingsList` hint hardcoding Enter and Esc instead of naming the configured `tui.select.confirm` and `tui.select.cancel` keys
 - Fixed Kitty images disappearing in Konsole in both regular and fullscreen mode: `allocateImageId()` now returns IDs that fit a signed 32-bit integer, which Konsole requires ([#12548](https://github.com/earendil-works/pi/issues/12548))
 - Fixed regular mode clearing the screen and scrollback whenever an appended Kitty image reached past the bottom of the screen ([#12548](https://github.com/earendil-works/pi/issues/12548))
@@ -278,6 +280,7 @@
 - Fixed duplicate fullscreen right-click paste in VS Code-based terminals on Windows ([#8186](https://github.com/earendil-works/pi/issues/8186)).
 - Fixed padded text exceeding narrow terminal widths ([#8252](https://github.com/earendil-works/pi/issues/8252)).
 - Fixed wrapped Markdown table links leaking color into borders and neighboring cells, including tables inside blockquotes ([#8335](https://github.com/earendil-works/pi/issues/8335)).
+
 
 ## [0.84.2] - 2026-08-14
 

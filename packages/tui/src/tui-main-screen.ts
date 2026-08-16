@@ -15,7 +15,7 @@ import {
 	VIEWPORT_TUI,
 	type ViewportTUI,
 } from "./tui.ts";
-import { sliceByColumn, visibleWidth } from "./utils.ts";
+import { sliceByColumn, truncateToWidth, visibleWidth } from "./utils.ts";
 
 /** OSC 133 prompt markers at the start of a rendered line. Fullscreen uses them for prompt navigation. */
 const OSC133_ZONE_PREFIX = /^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/;
@@ -732,7 +732,7 @@ export class TuiMainScreen extends TuiBase implements ViewportTUI {
 		const renderEnd = Math.min(lastChanged, newLines.length - 1);
 		for (let i = firstChanged; i <= renderEnd; i++) {
 			if (i > firstChanged) output.append("\r\n");
-			const line = newLines[i];
+			let line = newLines[i];
 			const isImage = isImageLine(line);
 			const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i, renderEnd) : 1;
 			if (imageReservedRows > 1) {
@@ -757,10 +757,11 @@ export class TuiMainScreen extends TuiBase implements ViewportTUI {
 
 			output.append("\x1b[2K"); // Clear current line
 			if (!isImage && visibleWidth(line) > width) {
-				// Log all lines to crash file for debugging
+				// A component that does not truncate its own output used to crash the session here. Keep the
+				// diagnostic, but clip the line so a single overlong row cannot take the whole UI down.
 				const crashLogPath = path.join(this.logDirectory ?? os.tmpdir(), "pi-tui-crash.log");
 				const crashData = [
-					`Crash at ${new Date().toISOString()}`,
+					`Overlong line at ${new Date().toISOString()}`,
 					`Terminal width: ${width}`,
 					`Line ${i} visible width: ${visibleWidth(line)}`,
 					"",
@@ -768,27 +769,13 @@ export class TuiMainScreen extends TuiBase implements ViewportTUI {
 					...newLines.map((l, idx) => `[${idx}] (w=${visibleWidth(l)}) ${l}`),
 					"",
 				].join("\n");
-				// A failed write (full or unwritable temp dir) must not hide the width error or skip `stop()`.
-				let crashLogStatus = `Debug log written to: ${crashLogPath}`;
 				try {
 					fs.mkdirSync(path.dirname(crashLogPath), { recursive: true });
 					fs.writeFileSync(crashLogPath, crashData);
-				} catch (error) {
-					crashLogStatus = `Could not write debug log to ${crashLogPath}: ${error instanceof Error ? error.message : String(error)}`;
+				} catch {
+					// Diagnostics are best effort; the clipped line is what keeps the UI usable.
 				}
-
-				// Clean up terminal state before throwing
-				this.stop();
-
-				const errorMsg = [
-					`Rendered line ${i} exceeds terminal width (${visibleWidth(line)} > ${width}).`,
-					"",
-					"This is likely caused by a custom TUI component not truncating its output.",
-					"Use visibleWidth() to measure and truncateToWidth() to truncate lines.",
-					"",
-					crashLogStatus,
-				].join("\n");
-				throw new Error(errorMsg);
+				line = truncateToWidth(line, width, "");
 			}
 			output.append(line);
 		}

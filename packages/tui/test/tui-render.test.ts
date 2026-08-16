@@ -185,6 +185,19 @@ describe("regular fixed layout", () => {
 });
 
 describe("TUI render scheduling", () => {
+	it("clips an over-wide component line instead of terminating the TUI", async () => {
+		const terminal = new VirtualTerminal(10, 4);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		component.lines = ["1234567890🙂"];
+		tui.addChild(component);
+		tui.start();
+		await terminal.waitForRender();
+
+		assert.strictEqual(terminal.getViewport()[0], "1234567890");
+		tui.stop();
+	});
+
 	it("renders keyboard input without waiting for a throttled frame", async () => {
 		const terminal = new VirtualTerminal(40, 10);
 		const tui: TUI = new TuiMainScreen(terminal);
@@ -343,12 +356,8 @@ function overrideEnv(names: readonly string[], value: string): () => void {
 	};
 }
 
-describe("TUI crash dump without configured log directory", () => {
-	it("writes the crash dump to the OS temp directory instead of a home-directory default", async () => {
-		// The TUI falls back to os.tmpdir() when no log directory is configured, so
-		// isolate the test by pointing the temp directory at a fresh directory rather
-		// than sharing the real one with concurrent test runs. os.tmpdir() reads
-		// TMPDIR on POSIX and TEMP/TMP on Windows, so override all three.
+describe("TUI over-wide line diagnostics", () => {
+	it("writes the diagnostic to the OS temp directory and clips the line instead of terminating", async () => {
 		const crashDir = mkdtempSync(join(tmpdir(), "pi-tui-crash-"));
 		const crashLogPath = join(crashDir, "pi-tui-crash.log");
 		const restoreTmpdirEnv = overrideEnv(["TMPDIR", "TEMP", "TMP"], crashDir);
@@ -361,25 +370,19 @@ describe("TUI crash dump without configured log directory", () => {
 			tui.start();
 			await terminal.waitForRender();
 
-			// Width overflow is detected in the differential render path
+			// An over-wide row is clipped so one bad component cannot take the UI down, but the
+			// diagnostic still lands somewhere a bug report can quote.
 			component.lines = ["ok", "x".repeat(60)];
-			assert.throws(
-				() => tui.renderNow(),
-				(error: unknown) => {
-					assert.ok(error instanceof Error);
-					assert.ok(error.message.includes(crashLogPath), `error message should reference ${crashLogPath}`);
-					return true;
-				},
-			);
+			assert.doesNotThrow(() => tui.renderNow());
 			assert.match(readFileSync(crashLogPath, "utf-8"), /Terminal width: 40/);
+			tui.stop();
 		} finally {
 			restoreTmpdirEnv();
 			rmSync(crashDir, { recursive: true, force: true });
 		}
 	});
 
-	// #10585: a full or unwritable temp dir must not replace the width error.
-	it("reports the width error when the crash dump cannot be written", async () => {
+	it("keeps rendering when the diagnostic cannot be written", async () => {
 		const crashDir = mkdtempSync(join(tmpdir(), "pi-tui-crash-"));
 		// A regular file where the log directory should be makes the dump fail to write.
 		const logDirectory = join(crashDir, "not-a-directory");
@@ -400,17 +403,10 @@ describe("TUI crash dump without configured log directory", () => {
 			await terminal.waitForRender();
 
 			component.lines = ["ok", "x".repeat(60)];
-			assert.throws(
-				() => tui.renderNow(),
-				(error: unknown) => {
-					assert.ok(error instanceof Error);
-					assert.match(error.message, /exceeds terminal width/);
-					assert.match(error.message, /Could not write debug log to /);
-					return true;
-				},
-			);
-			// The terminal leaves raw mode before the error propagates.
-			assert.equal(terminalStops, 1);
+			assert.doesNotThrow(() => tui.renderNow());
+			// The session keeps running, so the terminal is never torn down for this.
+			assert.equal(terminalStops, 0);
+			tui.stop();
 		} finally {
 			rmSync(crashDir, { recursive: true, force: true });
 		}
