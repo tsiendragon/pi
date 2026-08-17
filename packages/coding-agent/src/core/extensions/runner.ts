@@ -440,6 +440,7 @@ export class ExtensionRunner {
 		this.runtime.getActiveTools = actions.getActiveTools;
 		this.runtime.getAllTools = actions.getAllTools;
 		this.runtime.getSettings = actions.getSettings;
+		this.runtime.executeTool = actions.executeTool;
 		this.runtime.setActiveTools = actions.setActiveTools;
 		this.runtime.refreshTools = actions.refreshTools;
 		this.runtime.getCommands = actions.getCommands;

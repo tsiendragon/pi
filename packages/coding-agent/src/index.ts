@@ -108,6 +108,8 @@ export type {
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionToolContext,
+	ExtensionToolExecutionOptions,
+	ExtensionToolExecutionResult,
 	ExtensionUIContext,
 	ExtensionUICustomOptions,
 	ExtensionUIDialogOptions,

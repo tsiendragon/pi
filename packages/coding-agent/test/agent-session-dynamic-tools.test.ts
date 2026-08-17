@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { ExtensionAPI } from "../src/core/extensions/types.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -93,6 +94,137 @@ describe("AgentSession dynamic tool registration", () => {
 		expect(optedOutEnv).not.toHaveProperty("PI_MODEL");
 		expect(optedOutEnv).not.toHaveProperty("PI_REASONING_LEVEL");
 
+		session.dispose();
+	});
+
+	it("executes active tools through validation, policy hooks, updates, and lifecycle events", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+		let extensionApi!: ExtensionAPI;
+		let executions = 0;
+		let activeExecutions = 0;
+		let maxActiveExecutions = 0;
+		let activePreflights = 0;
+		let maxActivePreflights = 0;
+		let activeSequentialExecutions = 0;
+		let maxActiveSequentialExecutions = 0;
+		const events: string[] = [];
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+					pi.registerTool({
+						name: "nested_sequential_target",
+						label: "Nested Sequential Target",
+						description: "Sequential nested execution target",
+						parameters: Type.Object({ value: Type.Number() }),
+						executionMode: "sequential",
+						execute: async (_toolCallId, params) => {
+							activeSequentialExecutions++;
+							maxActiveSequentialExecutions = Math.max(
+								maxActiveSequentialExecutions,
+								activeSequentialExecutions,
+							);
+							await new Promise((resolve) => setTimeout(resolve, 10));
+							activeSequentialExecutions--;
+							return { content: [{ type: "text", text: `sequential:${params.value}` }], details: {} };
+						},
+					});
+					pi.registerTool({
+						name: "nested_target",
+						label: "Nested Target",
+						description: "Nested execution target",
+						parameters: Type.Object({ value: Type.Number() }),
+						execute: async (_toolCallId, params, _signal, onUpdate) => {
+							executions++;
+							activeExecutions++;
+							maxActiveExecutions = Math.max(maxActiveExecutions, activeExecutions);
+							onUpdate?.({ content: [{ type: "text", text: "working" }], details: {} });
+							await new Promise((resolve) => setTimeout(resolve, 10));
+							activeExecutions--;
+							return { content: [{ type: "text", text: `value:${params.value}` }], details: {} };
+						},
+					});
+					pi.on("tool_call", async (event) => {
+						if (event.toolName !== "nested_target") return;
+						activePreflights++;
+						maxActivePreflights = Math.max(maxActivePreflights, activePreflights);
+						events.push("tool_call");
+						await new Promise((resolve) => setTimeout(resolve, 5));
+						activePreflights--;
+						if (event.input.value === 9) return { block: true, reason: "blocked by test policy" };
+					});
+					pi.on("tool_result", (event) => {
+						if (event.toolName === "nested_target") events.push("tool_result");
+					});
+					pi.on("tool_execution_start", (event) => {
+						if (event.toolName === "nested_target") events.push("start");
+					});
+					pi.on("tool_execution_update", (event) => {
+						if (event.toolName === "nested_target") events.push("update");
+					});
+					pi.on("tool_execution_end", (event) => {
+						if (event.toolName === "nested_target") events.push("end");
+					});
+				},
+			],
+		});
+		await resourceLoader.reload();
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+
+		const updates: string[] = [];
+		const executed = await extensionApi.executeTool(
+			"nested_target",
+			{ value: 3 },
+			{
+				toolCallId: "nested-1",
+				onUpdate: (partial) => updates.push((partial.content[0] as { text: string }).text),
+			},
+		);
+		expect(executed).toMatchObject({
+			isError: false,
+			result: { content: [{ type: "text", text: "value:3" }] },
+		});
+		expect(updates).toEqual(["working"]);
+		expect(events).toEqual(["start", "tool_call", "update", "tool_result", "end"]);
+
+		const invalid = await extensionApi.executeTool("nested_target", { value: "bad" });
+		expect(invalid.isError).toBe(true);
+		expect(executions).toBe(1);
+
+		const blocked = await extensionApi.executeTool("nested_target", { value: 9 });
+		expect(blocked.isError).toBe(true);
+		expect(blocked.result.content[0]).toMatchObject({ text: "blocked by test policy" });
+		expect(executions).toBe(1);
+
+		await Promise.all([
+			extensionApi.executeTool("nested_target", { value: 4 }),
+			extensionApi.executeTool("nested_target", { value: 5 }),
+		]);
+		expect(maxActivePreflights).toBe(1);
+		expect(maxActiveExecutions).toBe(2);
+
+		await Promise.all([
+			extensionApi.executeTool("nested_sequential_target", { value: 6 }),
+			extensionApi.executeTool("nested_sequential_target", { value: 7 }),
+		]);
+		expect(maxActiveSequentialExecutions).toBe(1);
+
+		session.setActiveToolsByName(["read"]);
+		await expect(extensionApi.executeTool("nested_target", { value: 4 })).rejects.toThrow(
+			"Tool nested_target is not active",
+		);
 		session.dispose();
 	});
 

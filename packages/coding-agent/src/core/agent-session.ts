@@ -25,6 +25,7 @@ import {
 	type AgentState,
 	type AgentTool,
 	type AgentToolCallOutcome,
+	type AgentToolResult,
 	type BeforeToolCallContext,
 	type BeforeToolCallResult,
 	type PrepareNextTurnContext,
@@ -32,7 +33,14 @@ import {
 	type StreamFn,
 	type ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import { contentText, getCurrentSystemMessage, getCurrentTools, retryDelayMs } from "@earendil-works/pi-ai";
+import {
+	contentText,
+	getCurrentSystemMessage,
+	getCurrentTools,
+	type JsonObject,
+	retryDelayMs,
+	validateToolArguments,
+} from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
 	AuthResult,
@@ -91,6 +99,8 @@ import {
 	type ExtensionErrorListener,
 	type ExtensionMode,
 	ExtensionRunner,
+	type ExtensionToolExecutionOptions,
+	type ExtensionToolExecutionResult,
 	type ExtensionUIContext,
 	type InputSource,
 	type MessageEndEvent,
@@ -514,6 +524,9 @@ export class AgentSession {
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
+	private _extensionToolPreflight: Promise<void> = Promise.resolve();
+	private _extensionSequentialToolExecution: Promise<void> = Promise.resolve();
+	private _extensionToolCallSequence = 0;
 
 	private _baseSystemPromptOptions!: NormalizedBuildSystemPromptOptions;
 	/** Prompt options after before_agent_start mutations for the active run. */
@@ -1590,12 +1603,177 @@ export class AgentSession {
 			...(definition.namespace ? { namespace: definition.namespace } : {}),
 			...(definition.annotations ? { annotations: { ...definition.annotations } } : {}),
 			...(definition.reachesTools ? { reachesTools: definition.reachesTools } : {}),
+			executionMode: definition.executionMode,
 			sourceInfo,
 		}));
 	}
 
 	getToolDefinition(name: string): ToolDefinition | undefined {
 		return this._toolDefinitions.get(name)?.definition;
+	}
+
+	/**
+	 * Execute an active tool on behalf of a higher-order extension tool.
+	 * Preflight is serialized to match native parallel tool execution; allowed tools then run concurrently.
+	 */
+	async executeTool(
+		toolName: string,
+		args: unknown,
+		options: ExtensionToolExecutionOptions = {},
+	): Promise<ExtensionToolExecutionResult> {
+		const tool = this.agent.state.tools.find((candidate) => candidate.name === toolName);
+		if (!tool) {
+			throw new Error(`Tool ${toolName} is not active`);
+		}
+		const toolCallId = options.toolCallId ?? `extension-tool-${++this._extensionToolCallSequence}`;
+		const errorResult = (message: string, terminate = false): AgentToolResult<unknown> => ({
+			content: [{ type: "text", text: message }],
+			details: {},
+			...(terminate ? { terminate: true } : {}),
+		});
+		const emitEnd = async (result: AgentToolResult<unknown>, isError: boolean): Promise<void> => {
+			await this._handleAgentEvent({
+				type: "tool_execution_end",
+				toolCallId,
+				toolName,
+				result,
+				isError,
+			});
+		};
+
+		const previousPreflight = this._extensionToolPreflight;
+		let releasePreflight!: () => void;
+		const currentPreflight = new Promise<void>((resolve) => {
+			releasePreflight = resolve;
+		});
+		this._extensionToolPreflight = previousPreflight.then(() => currentPreflight);
+		await previousPreflight;
+
+		let preparedArgs: unknown;
+		try {
+			await this._handleAgentEvent({
+				type: "tool_execution_start",
+				toolCallId,
+				toolName,
+				args,
+			});
+			if (options.signal?.aborted) {
+				const result = errorResult("Operation aborted");
+				releasePreflight();
+				await emitEnd(result, true);
+				return { result, isError: true };
+			}
+			const prepared = tool.prepareArguments ? tool.prepareArguments(args) : args;
+			preparedArgs = validateToolArguments(tool, {
+				type: "toolCall",
+				id: toolCallId,
+				name: toolName,
+				arguments: prepared as JsonObject,
+			});
+			if (this._extensionRunner.hasHandlers("tool_call")) {
+				const beforeResult = await this._extensionRunner.emitToolCall({
+					type: "tool_call",
+					toolName,
+					toolCallId,
+					input: preparedArgs as Record<string, unknown>,
+				});
+				if (beforeResult?.block) {
+					const result = errorResult(
+						beforeResult.reason || "Tool execution was blocked",
+						beforeResult.terminate === true,
+					);
+					releasePreflight();
+					await emitEnd(result, true);
+					return { result, isError: true };
+				}
+			}
+			if (options.signal?.aborted) {
+				const result = errorResult("Operation aborted");
+				releasePreflight();
+				await emitEnd(result, true);
+				return { result, isError: true };
+			}
+		} catch (error) {
+			const result = errorResult(error instanceof Error ? error.message : String(error));
+			releasePreflight();
+			await emitEnd(result, true);
+			return { result, isError: true };
+		} finally {
+			releasePreflight();
+		}
+
+		let releaseSequentialExecution = (): void => {};
+		if (tool.executionMode === "sequential") {
+			const previousExecution = this._extensionSequentialToolExecution;
+			const currentExecution = new Promise<void>((resolve) => {
+				releaseSequentialExecution = resolve;
+			});
+			this._extensionSequentialToolExecution = previousExecution.then(() => currentExecution);
+			await previousExecution;
+		}
+
+		const updateEvents: Promise<void>[] = [];
+		let acceptingUpdates = true;
+		let result: AgentToolResult<unknown>;
+		let isError = false;
+		try {
+			result = await tool.execute(toolCallId, preparedArgs as never, options.signal, (partialResult) => {
+				if (!acceptingUpdates) return;
+				options.onUpdate?.(partialResult);
+				updateEvents.push(
+					this._handleAgentEvent({
+						type: "tool_execution_update",
+						toolCallId,
+						toolName,
+						args,
+						partialResult,
+					}),
+				);
+			});
+		} catch (error) {
+			result = errorResult(error instanceof Error ? error.message : String(error));
+			isError = true;
+		} finally {
+			acceptingUpdates = false;
+			await Promise.all(updateEvents);
+			releaseSequentialExecution();
+		}
+
+		if (this._extensionRunner.hasHandlers("tool_result")) {
+			try {
+				const afterResult = await this._extensionRunner.emitToolResult({
+					type: "tool_result",
+					toolName,
+					toolCallId,
+					input: preparedArgs as Record<string, unknown>,
+					content: result.content,
+					details: result.details,
+					isError,
+					usage: result.usage,
+				});
+				if (afterResult) {
+					result = {
+						...result,
+						content: afterResult.content ?? result.content,
+						details: afterResult.details ?? result.details,
+						usage: afterResult.usage ?? result.usage,
+					};
+					isError = afterResult.isError ?? isError;
+				}
+			} catch (error) {
+				result = errorResult(error instanceof Error ? error.message : String(error));
+				isError = true;
+			}
+		}
+
+		result = {
+			...result,
+			content: await normalizeToolResultImages(result.content ?? [], {
+				autoResizeImages: this.settingsManager.getImageAutoResize(),
+			}),
+		};
+		await emitEnd(result, isError);
+		return { result, isError };
 	}
 
 	/**
@@ -3593,6 +3771,7 @@ export class AgentSession {
 				getActiveTools: () => this.getActiveToolNames(),
 				getAllTools: () => this.getAllTools(),
 				getSettings: () => this.settingsManager.getSettings(),
+				executeTool: (toolName, args, options) => this.executeTool(toolName, args, options),
 				setActiveTools: (toolNames) => this.setActiveToolsByName(toolNames),
 				refreshTools: () => this._refreshToolRegistry(),
 				getCommands,

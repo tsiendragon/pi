@@ -1928,7 +1928,7 @@ pi.setActiveTools([...new Set([...active, "my_custom_tool"])]); // Keep current 
 pi.setActiveTools(["read", "bash"]); // Only read and bash
 ```
 
-`pi.getAllTools()` returns `name`, `description`, `parameters`, `promptGuidelines`, `exposure`, `sourceInfo`, and, when set, `namespace`, `annotations`, and `reachesTools`.
+`pi.getAllTools()` returns `name`, `description`, `parameters`, `promptGuidelines`, `executionMode`, `exposure`, `sourceInfo`, and, when set, `namespace`, `annotations`, and `reachesTools`.
 
 Typical `sourceInfo` values:
 - `source: "builtin"` for tools shipped with Pi: core tools (`path: "builtin:<tool>"`) and tools registered by built-in extensions such as `builtin:mcp` (`path: "builtin:<extension>"`)
@@ -1936,6 +1936,23 @@ Typical `sourceInfo` values:
 - extension source metadata for tools registered by extensions
 
 `pi.setActiveTools()` ignores unknown and `hidden` tools. Tools with `codemode` or `deferred` exposure stay callable from codemode scripts whether active or not.
+
+### pi.executeTool(toolName, args, options?)
+
+Execute one currently active tool from a higher-order extension tool. Pi applies the target tool's argument validation, `tool_call` / `tool_result` policy hooks, abort signal, lifecycle events, partial updates, and image normalization. Inactive tools are rejected. Higher-order tools must prevent recursive self-invocation.
+
+```typescript
+const nested = await pi.executeTool("read", { path: "README.md" }, {
+  toolCallId: `${outerToolCallId}:0`,
+  signal,
+  onUpdate(partial) {
+    // Forward or aggregate partial progress.
+  },
+});
+// nested.result contains the normal tool result; nested.isError reports execution or policy failure.
+```
+
+Preflight for concurrent `pi.executeTool()` calls is serialized, matching Pi's native parallel-tool policy ordering. Allowed tools may then run concurrently, while targets declared with `executionMode: "sequential"` share a per-session execution gate across concurrent higher-order calls.
 
 ### pi.setModel(model)
 

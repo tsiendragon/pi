@@ -73,6 +73,7 @@ export type {
 	ExecOptions,
 	ExecResult,
 	ExecuteToolOptions,
+	ExecuteToolHandler,
 	Extension,
 	ExtensionActions,
 	// API
@@ -92,6 +93,8 @@ export type {
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionToolContext,
+	ExtensionToolExecutionOptions,
+	ExtensionToolExecutionResult,
 	ExtensionUIContext,
 	ExtensionUICustomOptions,
 	ExtensionUIDialogOptions,

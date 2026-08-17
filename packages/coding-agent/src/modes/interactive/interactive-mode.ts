@@ -24,6 +24,7 @@ import type {
 	Keybinding,
 	KeyId,
 	MarkdownTheme,
+	OverlayHandle,
 	OverlayOptions,
 	ProgramResumeCommand,
 	SlashCommand,

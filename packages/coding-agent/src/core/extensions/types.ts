@@ -1839,6 +1839,16 @@ export interface ExtensionAPI {
 	getSettings(): Settings;
 
 	/**
+	 * Execute one currently active tool through Pi's validation, policy hooks, lifecycle events, and result normalization.
+	 * Intended for higher-order tools; callers must prevent recursive self-invocation.
+	 */
+	executeTool(
+		toolName: string,
+		args: unknown,
+		options?: ExtensionToolExecutionOptions,
+	): Promise<ExtensionToolExecutionResult>;
+
+	/**
 	 * Set the active tools by name. Unknown and `hidden` tools are ignored. Tools with `codemode` or
 	 * `deferred` exposure stay callable from codemode scripts whether active or not.
 	 */
@@ -2188,7 +2198,7 @@ export type GetActiveToolsHandler = () => string[];
 /** Tool info with name, description, parameter schema, prompt guidelines, and source metadata. */
 export type ToolInfo = Pick<
 	ToolDefinition,
-	"name" | "description" | "parameters" | "promptGuidelines" | "reachesTools"
+	"name" | "description" | "parameters" | "promptGuidelines" | "reachesTools" | "executionMode"
 > & {
 	exposure: ToolExposure;
 	namespace?: ToolNamespace;
@@ -2199,6 +2209,26 @@ export type ToolInfo = Pick<
 export type GetAllToolsHandler = () => ToolInfo[];
 
 export type GetSettingsHandler = () => Settings;
+
+export interface ExtensionToolExecutionOptions {
+	/** Stable nested tool-call ID used in lifecycle events. */
+	toolCallId?: string;
+	/** Abort signal propagated to the nested tool. */
+	signal?: AbortSignal;
+	/** Receive partial nested tool updates. */
+	onUpdate?: AgentToolUpdateCallback<unknown>;
+}
+
+export interface ExtensionToolExecutionResult {
+	result: AgentToolResult<unknown>;
+	isError: boolean;
+}
+
+export type ExecuteToolHandler = (
+	toolName: string,
+	args: unknown,
+	options?: ExtensionToolExecutionOptions,
+) => Promise<ExtensionToolExecutionResult>;
 
 export type GetCommandsHandler = () => SlashCommandInfo[];
 
@@ -2268,6 +2298,7 @@ export interface ExtensionActions {
 	getActiveTools: GetActiveToolsHandler;
 	getAllTools: GetAllToolsHandler;
 	getSettings: GetSettingsHandler;
+	executeTool: ExecuteToolHandler;
 	setActiveTools: SetActiveToolsHandler;
 	refreshTools: RefreshToolsHandler;
 	getCommands: GetCommandsHandler;
