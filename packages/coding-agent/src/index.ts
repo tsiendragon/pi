@@ -89,6 +89,7 @@ export type {
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionUIContext,
+	ExtensionUICustomOptions,
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
 	FindToolCallEvent,
@@ -380,6 +381,9 @@ export {
 	ExtensionInputComponent,
 	ExtensionSelectorComponent,
 	FooterComponent,
+	type FooterViewModel,
+	FooterViewModelComponent,
+	formatTokens,
 	keyHint,
 	keyText,
 	LoginDialogComponent,
@@ -388,6 +392,7 @@ export {
 	type RenderDiffOptions,
 	rawKeyHint,
 	renderDiff,
+	renderFooterViewModel,
 	SessionSelectorComponent,
 	type SettingsCallbacks,
 	type SettingsConfig,
@@ -406,6 +411,7 @@ export {
 } from "./modes/interactive/components/index.ts";
 // Theme utilities for custom tools and extensions
 export {
+	getEditorTheme,
 	getLanguageFromPath,
 	getMarkdownTheme,
 	getSelectListTheme,

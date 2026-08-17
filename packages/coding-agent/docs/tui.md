@@ -121,6 +121,20 @@ async execute(toolCallId, params, signal, onUpdate, ctx) {
 }
 ```
 
+## Fullscreen Routes
+
+Fullscreen routes replace the complete application layout for the lifetime of a `ctx.ui.custom()` call:
+
+```typescript
+const result = await ctx.ui.custom<void>(
+  (tui, theme, keybindings, done) =>
+    new MyFullscreenRoute({ tui, theme, keybindings, onClose: () => done() }),
+  { fullscreen: true },
+);
+```
+
+The host owns alternate-screen switching and restores the previous application layout, focus, editor draft, and viewport after `done()`. A fullscreen component should normally be a `VStack` containing one primary `ScrollView` plus any fixed editor or footer dock. This keeps mouse-wheel, page-scroll, selection, and search inside the route document. `fullscreen` and `overlay` cannot both be enabled.
+
 ## Overlays
 
 Overlays render components on top of existing content without clearing the screen. Pass `{ overlay: true }` to `ctx.ui.custom()`:

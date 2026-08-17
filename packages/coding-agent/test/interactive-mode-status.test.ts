@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { type AutocompleteProvider, CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { type Component, Container, type Focusable, type TUI } from "../../tui/src/tui.ts";
+import { TuiAltScreen } from "../../tui/src/tui-alt-screen.ts";
 import { TuiMainScreen } from "../../tui/src/tui-main-screen.ts";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
@@ -231,6 +232,56 @@ describe("InteractiveMode.createExtensionUIContext setTheme", () => {
 describe("InteractiveMode.showExtensionCustom", () => {
 	beforeAll(() => {
 		initTheme("dark");
+	});
+
+	test("fullscreen custom UI replaces and restores the complete layout root", async () => {
+		const terminal = new VirtualTerminal(80, 24);
+		const ui = new TuiAltScreen(terminal);
+		const editorContainer = new Container();
+		const main = new TestFocusableComponent("MAIN_SENTINEL");
+		const child = new TestFocusableComponent("CHILD_SENTINEL");
+		let closeChild: (value: string) => void = () => {
+			throw new Error("closeChild was not initialized");
+		};
+		const fakeThis = {
+			editor: main,
+			editorContainer,
+			keybindings: {},
+			renderer: ui,
+			ui,
+			fullscreenLayoutRoot: main,
+			switchTuiMode: vi.fn(() => true),
+			disposeActiveSelector: vi.fn(),
+		};
+		ui.addChild(main);
+		ui.setLayoutRoot(main);
+		ui.setFocus(main);
+		ui.start();
+		try {
+			const resultPromise = (InteractiveMode as any).prototype.showExtensionCustom.call(
+				fakeThis,
+				(_tui: TUI, _theme: unknown, _keybindings: unknown, done: (value: string) => void) => {
+					closeChild = done;
+					return child;
+				},
+				{ fullscreen: true },
+			) as Promise<string>;
+			await flushTui(ui, terminal);
+
+			expect(ui.render(80).join("\n")).toContain("CHILD_SENTINEL");
+			expect(ui.render(80).join("\n")).not.toContain("MAIN_SENTINEL");
+			expect(ui.getFocusedComponent()).toBe(child);
+
+			closeChild("done");
+			await expect(resultPromise).resolves.toBe("done");
+			await flushTui(ui, terminal);
+
+			expect(ui.render(80).join("\n")).toContain("MAIN_SENTINEL");
+			expect(ui.render(80).join("\n")).not.toContain("CHILD_SENTINEL");
+			expect(ui.getFocusedComponent()).toBe(main);
+		} finally {
+			ui.stop();
+		}
 	});
 
 	test("overlay custom UI reclaims input after non-overlay custom UI closes", async () => {
