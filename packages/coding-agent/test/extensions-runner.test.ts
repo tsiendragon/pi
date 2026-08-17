@@ -80,6 +80,7 @@ describe("ExtensionRunner", () => {
 		setLabel: () => {},
 		getActiveTools: () => [],
 		getAllTools: () => [],
+		executeTool: async () => ({ result: { content: [], details: {} }, isError: false }),
 		setActiveTools: () => {},
 		refreshTools: () => {},
 		getCommands: () => [],

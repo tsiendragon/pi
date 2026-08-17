@@ -1700,12 +1700,29 @@ pi.setActiveTools([...new Set([...active, "my_custom_tool"])]); // Keep current 
 pi.setActiveTools(["read", "bash"]); // Switch to read-only
 ```
 
-`pi.getAllTools()` returns `name`, `description`, `parameters`, `promptGuidelines`, and `sourceInfo`.
+`pi.getAllTools()` returns `name`, `description`, `parameters`, `promptGuidelines`, `executionMode`, and `sourceInfo`.
 
 Typical `sourceInfo.source` values:
 - `builtin` for built-in tools
 - `sdk` for tools passed via `createAgentSession({ customTools })`
 - extension source metadata for tools registered by extensions
+
+### pi.executeTool(toolName, args, options?)
+
+Execute one currently active tool from a higher-order extension tool. Pi applies the target tool's argument validation, `tool_call` / `tool_result` policy hooks, abort signal, lifecycle events, partial updates, and image normalization. Inactive tools are rejected. Higher-order tools must prevent recursive self-invocation.
+
+```typescript
+const nested = await pi.executeTool("read", { path: "README.md" }, {
+  toolCallId: `${outerToolCallId}:0`,
+  signal,
+  onUpdate(partial) {
+    // Forward or aggregate partial progress.
+  },
+});
+// nested.result contains the normal tool result; nested.isError reports execution or policy failure.
+```
+
+Preflight for concurrent `pi.executeTool()` calls is serialized, matching Pi's native parallel-tool policy ordering. Allowed tools may then run concurrently, while targets declared with `executionMode: "sequential"` share a per-session execution gate across concurrent higher-order calls.
 
 ### pi.setModel(model)
 

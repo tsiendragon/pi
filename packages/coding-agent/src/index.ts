@@ -88,6 +88,8 @@ export type {
 	ExtensionHandler,
 	ExtensionRuntime,
 	ExtensionShortcut,
+	ExtensionToolExecutionOptions,
+	ExtensionToolExecutionResult,
 	ExtensionUIContext,
 	ExtensionUICustomOptions,
 	ExtensionUIDialogOptions,
