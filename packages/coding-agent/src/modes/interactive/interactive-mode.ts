@@ -24,7 +24,6 @@ import type {
 	Keybinding,
 	KeyId,
 	MarkdownTheme,
-	OverlayHandle,
 	OverlayOptions,
 	ProgramResumeCommand,
 	SlashCommand,
@@ -88,6 +87,7 @@ import type {
 	ExtensionContext,
 	ExtensionRunner,
 	ExtensionUIContext,
+	ExtensionUICustomOptions,
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
 	MarkdownTransformer,
@@ -684,9 +684,11 @@ export class InteractiveMode {
 		unsubscribe: () => void;
 	}>();
 
-	// Extension widgets (components rendered above/below the editor)
+	// Extension widgets (components rendered above status, above editor, or below editor)
+	private extensionWidgetsAboveStatus = new Map<string, Component & { dispose?(): void }>();
 	private extensionWidgetsAbove = new Map<string, Component & { dispose?(): void }>();
 	private extensionWidgetsBelow = new Map<string, Component & { dispose?(): void }>();
+	private widgetContainerAboveStatus!: Container;
 	private widgetContainerAbove!: Container;
 	private widgetContainerBelow!: Container;
 
@@ -765,6 +767,7 @@ export class InteractiveMode {
 		this.documentContainer.addChild(this.chatContainer);
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new Container();
+		this.widgetContainerAboveStatus = new Container();
 		this.widgetContainerAbove = new Container();
 		this.widgetContainerBelow = new Container();
 		this.keybindings = KeybindingsManager.create();
@@ -1108,6 +1111,7 @@ export class InteractiveMode {
 			document: this.documentContainer,
 			pendingMessages: this.pendingMessagesContainer,
 			status: this.statusContainer,
+			widgetsAboveStatus: this.widgetContainerAboveStatus,
 			widgetsAbove: this.widgetContainerAbove,
 			editor: this.editorContainer,
 			widgetsBelow: this.widgetContainerBelow,
@@ -1121,6 +1125,7 @@ export class InteractiveMode {
 		this.mountInteractiveTui(this.renderer, [
 			this.documentContainer,
 			this.pendingMessagesContainer,
+			this.widgetContainerAboveStatus,
 			this.statusContainer,
 			this.widgetContainerAbove,
 			this.editorContainer,
@@ -2629,6 +2634,7 @@ export class InteractiveMode {
 			map.delete(key);
 		};
 
+		removeExisting(this.extensionWidgetsAboveStatus);
 		removeExisting(this.extensionWidgetsAbove);
 		removeExisting(this.extensionWidgetsBelow);
 
@@ -2654,18 +2660,27 @@ export class InteractiveMode {
 			component = content(this.ui, theme);
 		}
 
-		const targetMap = placement === "belowEditor" ? this.extensionWidgetsBelow : this.extensionWidgetsAbove;
+		const targetMap =
+			placement === "aboveStatus"
+				? this.extensionWidgetsAboveStatus
+				: placement === "belowEditor"
+					? this.extensionWidgetsBelow
+					: this.extensionWidgetsAbove;
 		targetMap.set(key, component);
 		this.renderWidgets();
 	}
 
 	private clearExtensionWidgets(): void {
+		for (const widget of this.extensionWidgetsAboveStatus.values()) {
+			widget.dispose?.();
+		}
 		for (const widget of this.extensionWidgetsAbove.values()) {
 			widget.dispose?.();
 		}
 		for (const widget of this.extensionWidgetsBelow.values()) {
 			widget.dispose?.();
 		}
+		this.extensionWidgetsAboveStatus.clear();
 		this.extensionWidgetsAbove.clear();
 		this.extensionWidgetsBelow.clear();
 		this.renderWidgets();
@@ -2711,7 +2726,8 @@ export class InteractiveMode {
 	 * Render all extension widgets to the widget container.
 	 */
 	private renderWidgets(): void {
-		if (!this.widgetContainerAbove || !this.widgetContainerBelow) return;
+		if (!this.widgetContainerAboveStatus || !this.widgetContainerAbove || !this.widgetContainerBelow) return;
+		this.renderWidgetContainer(this.widgetContainerAboveStatus, this.extensionWidgetsAboveStatus, false, true);
 		this.renderWidgetContainer(this.widgetContainerAbove, this.extensionWidgetsAbove, true, true);
 		this.renderWidgetContainer(this.widgetContainerBelow, this.extensionWidgetsBelow, false, false);
 		this.ui.requestRender();
@@ -3157,7 +3173,10 @@ export class InteractiveMode {
 		}
 	}
 
-	/** Show a custom component with keyboard focus. Overlay mode renders on top of existing content. */
+	/**
+	 * Show a custom component with keyboard focus. Overlay mode renders on top of
+	 * the active layout; fullscreen mode temporarily replaces the complete layout.
+	 */
 	private async showExtensionCustom<T>(
 		factory: (
 			tui: TUI,
@@ -3165,15 +3184,42 @@ export class InteractiveMode {
 			keybindings: KeybindingsManager,
 			done: (result: T) => void,
 		) => (Component & { dispose?(): void }) | Promise<Component & { dispose?(): void }>,
-		options?: {
-			overlay?: boolean;
-			overlayOptions?: OverlayOptions | (() => OverlayOptions);
-			onHandle?: (handle: OverlayHandle) => void;
-			blocked?: BlockedStatus;
-		},
+		options?: ExtensionUICustomOptions,
 	): Promise<T> {
 		const savedText = this.editor.getExpandedText?.() ?? this.editor.getText();
 		const isOverlay = options?.overlay ?? false;
+		const isFullscreen = options?.fullscreen ?? false;
+		if (isOverlay && isFullscreen) {
+			throw new Error("Extension custom UI cannot be both overlay and fullscreen");
+		}
+
+		const previousMode = isFullscreen ? this.renderer.mode : undefined;
+		const previousFocus = isFullscreen ? this.ui.getFocusedComponent() : null;
+		if (isFullscreen) {
+			if (!previousMode) throw new Error("Fullscreen route has no previous TUI mode");
+			if (this.renderer.hasOverlayEntries) {
+				throw new Error("Cannot open fullscreen extension UI while an overlay is active");
+			}
+			if (previousMode !== "fullscreen" && !this.switchTuiMode("fullscreen")) {
+				throw new Error("Unable to switch to fullscreen TUI mode");
+			}
+			if (!TuiLayouts.isViewportTUI(this.renderer)) {
+				if (previousMode !== this.renderer.mode) this.switchTuiMode(previousMode);
+				throw new Error("Fullscreen extension UI requires a viewport TUI");
+			}
+		}
+
+		const restoreFullscreen = () => {
+			if (!previousMode) throw new Error("Fullscreen route has no previous TUI mode");
+			if (TuiLayouts.isViewportTUI(this.renderer)) {
+				this.renderer.setLayoutRoot(this.fullscreenLayoutRoot);
+			}
+			if (this.renderer.mode !== previousMode && !this.switchTuiMode(previousMode)) {
+				throw new Error(`Unable to restore ${previousMode} TUI mode`);
+			}
+			this.ui.setFocus(previousFocus ?? this.editor);
+			this.ui.requestRender();
+		};
 
 		return new Promise((resolve, reject) => {
 			let component: ExtensionDialogComponent | undefined;
@@ -3212,26 +3258,36 @@ export class InteractiveMode {
 				if (isOverlay) {
 					removeOverlay();
 					resolve(result);
-				} else {
-					restoreEditor();
+					return;
+				}
+				try {
+					if (isFullscreen) restoreFullscreen();
+					else restoreEditor();
 					resolve(result);
+				} catch (error) {
+					reject(error);
+				} finally {
 					disposeComponent();
 				}
 			};
 
 			Promise.resolve(factory(this.ui, theme, this.keybindings, close))
 				.then((c) => {
-					if (closed) return;
+					if (closed) {
+						try {
+							c.dispose?.();
+						} catch {
+							/* ignore dispose errors */
+						}
+						return;
+					}
 					component = c;
 					if (isOverlay) {
-						// Resolve overlay options - can be static or dynamic function
 						const resolveOptions = (): OverlayOptions | undefined => {
 							if (options?.overlayOptions) {
-								const opts =
-									typeof options.overlayOptions === "function"
-										? options.overlayOptions()
-										: options.overlayOptions;
-								return opts;
+								return typeof options.overlayOptions === "function"
+									? options.overlayOptions()
+									: options.overlayOptions;
 							}
 							// Fallback: use component's width property if available
 							const w = (c as { width?: number }).width;
@@ -3242,14 +3298,29 @@ export class InteractiveMode {
 						if (overlayStatusSource) this.programStatus.setBlocked(overlayStatusSource, options?.blocked);
 						// Expose handle to caller for visibility control
 						options?.onHandle?.(overlayHandle);
+					} else if (isFullscreen) {
+						if (!TuiLayouts.isViewportTUI(this.renderer)) {
+							throw new Error("Fullscreen extension UI lost its viewport TUI");
+						}
+						this.disposeActiveSelector();
+						this.renderer.setLayoutRoot(c);
+						this.ui.setFocus(c);
+						this.ui.requestRender();
 					} else {
 						this.pushExtensionDialog(c, options?.blocked);
 					}
 				})
-				.catch((err) => {
+				.catch((error) => {
 					if (closed) return;
-					if (!isOverlay) restoreEditor();
-					reject(err);
+					closed = true;
+					try {
+						if (isFullscreen) restoreFullscreen();
+						else if (!isOverlay) restoreEditor();
+					} catch (restoreError) {
+						reject(restoreError);
+						return;
+					}
+					reject(error);
 				});
 		});
 	}

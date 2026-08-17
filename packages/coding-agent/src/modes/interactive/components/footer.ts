@@ -55,6 +55,98 @@ interface SessionStats {
 	contextUsage: ContextUsage | undefined;
 }
 
+export interface FooterViewModel {
+	readonly pwd: string;
+	readonly statsLeft: string;
+	readonly modelName: string;
+	readonly provider?: string;
+	readonly availableProviderCount?: number;
+	readonly reasoning?: boolean;
+	readonly thinkingLevel?: string;
+	/** Routed model suffix shown after the model name, for example "claude-sonnet-4 • high". */
+	readonly routedLabel?: string;
+	readonly extensionStatuses?: ReadonlyMap<string, string>;
+}
+
+export function renderFooterViewModel(model: FooterViewModel, width: number): string[] {
+	let statsLeft = model.statsLeft;
+	let statsLeftWidth = visibleWidth(statsLeft);
+	if (statsLeftWidth > width) {
+		statsLeft = truncateToWidth(statsLeft, width, "...");
+		statsLeftWidth = visibleWidth(statsLeft);
+	}
+
+	const minPadding = 2;
+	let rightSideWithoutProvider = model.modelName;
+	if (model.reasoning) {
+		const thinkingLevel = model.thinkingLevel || "off";
+		rightSideWithoutProvider =
+			thinkingLevel === "off" ? `${model.modelName} • thinking off` : `${model.modelName} • ${thinkingLevel}`;
+	}
+	if (model.routedLabel) {
+		rightSideWithoutProvider += ` → ${model.routedLabel}`;
+	}
+
+	let rightSide = rightSideWithoutProvider;
+	if ((model.availableProviderCount ?? 0) > 1 && model.provider) {
+		rightSide = `(${model.provider}) ${rightSideWithoutProvider}`;
+		if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
+			rightSide = rightSideWithoutProvider;
+		}
+	}
+
+	const rightSideWidth = visibleWidth(rightSide);
+	const totalNeeded = statsLeftWidth + minPadding + rightSideWidth;
+	let statsLine: string;
+	if (totalNeeded <= width) {
+		statsLine = statsLeft + " ".repeat(width - statsLeftWidth - rightSideWidth) + rightSide;
+	} else {
+		const availableForRight = width - statsLeftWidth - minPadding;
+		if (availableForRight > 0) {
+			const truncatedRight = truncateToWidth(rightSide, availableForRight, "");
+			const truncatedRightWidth = visibleWidth(truncatedRight);
+			statsLine = statsLeft + " ".repeat(Math.max(0, width - statsLeftWidth - truncatedRightWidth)) + truncatedRight;
+		} else {
+			statsLine = statsLeft;
+		}
+	}
+
+	const dimStatsLeft = theme.fg("dim", statsLeft);
+	const remainder = statsLine.slice(statsLeft.length);
+	const dimRemainder = theme.fg("dim", remainder);
+	const lines = [
+		truncateToWidth(theme.fg("dim", model.pwd), width, theme.fg("dim", "...")),
+		dimStatsLeft + dimRemainder,
+	];
+	if (model.extensionStatuses && model.extensionStatuses.size > 0) {
+		const statusLine = Array.from(model.extensionStatuses.entries())
+			.sort(([a], [b]) => a.localeCompare(b))
+			.map(([, text]) => sanitizeStatusText(text))
+			.join(" ");
+		lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
+	}
+	return lines;
+}
+
+export class FooterViewModelComponent implements Component {
+	private model: FooterViewModel;
+
+	constructor(model: FooterViewModel) {
+		this.model = model;
+	}
+
+	setModel(model: FooterViewModel): void {
+		this.model = model;
+	}
+
+	invalidate(): void {}
+
+	render(width: number): string[] {
+		return renderFooterViewModel(this.model, width);
+	}
+}
+
+
 /**
  * Footer component that shows pwd, token stats, and context usage.
  * Computes token/context stats from session, gets git branch and extension statuses from provider.
@@ -214,89 +306,22 @@ export class FooterComponent implements Component {
 			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
 		}
 
-		let statsLeft = statsParts.join(" ");
-
-		// Add model name on the right side, plus thinking level if model supports it
-		const modelName = state.model?.id || "no-model";
-
-		let statsLeftWidth = visibleWidth(statsLeft);
-
-		// If statsLeft is too wide, truncate it
-		if (statsLeftWidth > width) {
-			statsLeft = truncateToWidth(statsLeft, width, "...");
-			statsLeftWidth = visibleWidth(statsLeft);
-		}
-
-		// Calculate available space for padding (minimum 2 spaces between stats and model)
-		const minPadding = 2;
-
-		// Add thinking level indicator if model supports reasoning
-		let rightSideWithoutProvider = modelName;
-		if (state.model?.reasoning) {
-			const thinkingLevel = state.thinkingLevel || "off";
-			rightSideWithoutProvider =
-				thinkingLevel === "off" ? `${modelName} • thinking off` : `${modelName} • ${thinkingLevel}`;
-		}
-		// A virtual model routes each request; show where the latest response went.
 		const routed = this.session.routedModel;
-		if (routed) {
-			const level = routed.thinkingLevel ? ` • ${routed.thinkingLevel}` : "";
-			rightSideWithoutProvider += ` → ${routed.model.id}${level}`;
-		}
+		const routedLabel = routed ? `${routed.model.id}${routed.thinkingLevel ? ` • ${routed.thinkingLevel}` : ""}` : undefined;
 
-		// Prepend the provider in parentheses if there are multiple providers and there's enough room
-		let rightSide = rightSideWithoutProvider;
-		if (this.footerData.getAvailableProviderCount() > 1 && state.model) {
-			rightSide = `(${state.model!.provider}) ${rightSideWithoutProvider}`;
-			if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
-				// Too wide, fall back
-				rightSide = rightSideWithoutProvider;
-			}
-		}
-
-		const rightSideWidth = visibleWidth(rightSide);
-		const totalNeeded = statsLeftWidth + minPadding + rightSideWidth;
-
-		let statsLine: string;
-		if (totalNeeded <= width) {
-			// Both fit - add padding to right-align model
-			const padding = " ".repeat(width - statsLeftWidth - rightSideWidth);
-			statsLine = statsLeft + padding + rightSide;
-		} else {
-			// Need to truncate right side
-			const availableForRight = width - statsLeftWidth - minPadding;
-			if (availableForRight > 0) {
-				const truncatedRight = truncateToWidth(rightSide, availableForRight, "");
-				const truncatedRightWidth = visibleWidth(truncatedRight);
-				const padding = " ".repeat(Math.max(0, width - statsLeftWidth - truncatedRightWidth));
-				statsLine = statsLeft + padding + truncatedRight;
-			} else {
-				// Not enough space for right side at all
-				statsLine = statsLeft;
-			}
-		}
-
-		// Apply dim to each part separately. statsLeft may contain color codes (for context %)
-		// that end with a reset, which would clear an outer dim wrapper. So we dim the parts
-		// before and after the colored section independently.
-		const dimStatsLeft = theme.fg("dim", statsLeft);
-		const remainder = statsLine.slice(statsLeft.length); // padding + rightSide
-		const dimRemainder = theme.fg("dim", remainder);
-
-		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
-		const lines = [pwdLine, dimStatsLeft + dimRemainder];
-
-		// Add extension statuses on a single line, sorted by key alphabetically
-		const extensionStatuses = this.footerData.getExtensionStatuses();
-		if (extensionStatuses.size > 0) {
-			const sortedStatuses = Array.from(extensionStatuses.entries())
-				.sort(([a], [b]) => a.localeCompare(b))
-				.map(([, text]) => sanitizeStatusText(text));
-			const statusLine = sortedStatuses.join(" ");
-			// Truncate to terminal width with dim ellipsis for consistency with footer style
-			lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
-		}
-
-		return lines;
+		return renderFooterViewModel(
+			{
+				pwd,
+				statsLeft: statsParts.join(" "),
+				modelName: state.model?.id || "no-model",
+				...(state.model ? { provider: state.model.provider } : {}),
+				availableProviderCount: this.footerData.getAvailableProviderCount(),
+				reasoning: state.model?.reasoning ?? false,
+				...(state.thinkingLevel ? { thinkingLevel: state.thinkingLevel } : {}),
+				...(routedLabel ? { routedLabel } : {}),
+				extensionStatuses: this.footerData.getExtensionStatuses(),
+			},
+			width,
+		);
 	}
 }

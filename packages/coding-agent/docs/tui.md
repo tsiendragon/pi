@@ -139,6 +139,20 @@ This component does not display a text cursor, so it does not need `Focusable`. 
 
 Custom components do not report pi as waiting for the user, because `ctx.ui.custom()` also hosts loaders and other non-blocking UI. When a component waits for an answer, pass `blocked: { kind: "question", message: "Pick a color" }` so terminals that support [program status](terminal-setup.md#program-status) show pi as blocked. `kind` is `"question"`, `"permission"`, or `"auth"`. An inline component reports blocked while it is visible: a newer dialog or component shown in its place reports its own status instead. An overlay reports blocked from when it is shown until it calls `done()`, also while it is hidden with `setHidden()` or covered by another overlay. When several blocking prompts are open, the most recently shown one supplies `kind` and `message`.
 
+### Fullscreen routes
+
+Pass `fullscreen: true` to replace the complete application layout for the lifetime of the `ctx.ui.custom()` call:
+
+```typescript
+const result = await ctx.ui.custom<void>(
+  (tui, theme, keybindings, done) =>
+    new MyFullscreenRoute({ tui, theme, keybindings, onClose: () => done() }),
+  { fullscreen: true },
+);
+```
+
+The host owns alternate-screen switching and restores the previous application layout, focus, editor draft, and viewport after `done()`. A fullscreen component should normally be a `VStack` containing one primary `ScrollView` plus any fixed editor or footer dock. This keeps mouse-wheel, page-scroll, selection, and search inside the route document. `fullscreen` and `overlay` cannot both be enabled.
+
 Pass `overlay: true` to draw above existing content. Overlay options control size, anchors, offsets, margins, and responsive visibility. An overlay handle can change focus or temporarily hide and show the overlay with `setHidden()` while the interaction remains active.
 
 Focused overlays retain input ownership across ordinary renders. If another component should receive input while an overlay remains visible, explicitly release or redirect focus through the handle.

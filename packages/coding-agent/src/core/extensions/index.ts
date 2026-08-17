@@ -93,6 +93,7 @@ export type {
 	ExtensionShortcut,
 	ExtensionToolContext,
 	ExtensionUIContext,
+	ExtensionUICustomOptions,
 	ExtensionUIDialogOptions,
 	ExtensionVirtualModel,
 	ExtensionWidgetOptions,

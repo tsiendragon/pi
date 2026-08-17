@@ -2925,7 +2925,9 @@ ctx.ui.setWorkingIndicator({
 ctx.ui.setWorkingIndicator({ frames: [] });  // Hide indicator
 ctx.ui.setWorkingIndicator();  // Restore default spinner
 
-// Widget above editor (default)
+// Widget above the transient status line
+ctx.ui.setWidget("my-widget", ["Line 1", "Line 2"], { placement: "aboveStatus" });
+// Widget directly above the editor (default)
 ctx.ui.setWidget("my-widget", ["Line 1", "Line 2"]);
 // Widget below editor
 ctx.ui.setWidget("my-widget", ["Line 1", "Line 2"], { placement: "belowEditor" });
@@ -3085,6 +3087,20 @@ The callback receives:
 - `done(value)` - Call to close component and return value
 
 The factory can also return a `Promise` of a component. See [Terminal UI](tui.md#build-a-minimal-custom-screen) for a complete custom screen with cached rendering.
+
+#### Fullscreen Route Mode
+
+Pass `{ fullscreen: true }` when the extension needs an isolated, application-owned page rather than an editor replacement or overlay:
+
+```typescript
+const result = await ctx.ui.custom<void>(
+  (tui, theme, keybindings, done) =>
+    new MyFullscreenRoute({ tui, theme, keybindings, onClose: () => done() }),
+  { fullscreen: true },
+);
+```
+
+The host switches to the alternate-screen renderer when necessary, mounts the component as the complete layout root, and restores the previous layout, focus, editor draft, and viewport when `done()` is called. Use a `VStack` with one primary `ScrollView` for independently scrollable content and a fixed editor/footer dock. `fullscreen` and `overlay` are mutually exclusive.
 
 #### Overlay Mode (Experimental)
 

@@ -126,7 +126,7 @@ export interface ExtensionUIDialogOptions {
 }
 
 /** Placement for extension widgets. */
-export type WidgetPlacement = "aboveEditor" | "belowEditor";
+export type WidgetPlacement = "aboveStatus" | "aboveEditor" | "belowEditor";
 
 /** Options for extension widgets. */
 export interface ExtensionWidgetOptions {
@@ -143,6 +143,28 @@ export interface WorkingIndicatorOptions {
 	frames?: string[];
 	/** Frame interval in milliseconds for animated indicators. */
 	intervalMs?: number;
+}
+
+/** Presentation options for a custom extension component. */
+export interface ExtensionUICustomOptions {
+	/** Render on top of the active application layout. */
+	overlay?: boolean;
+	/**
+	 * Replace the complete application layout with an isolated fullscreen route.
+	 * The host owns alternate-screen switching and restores the previous layout,
+	 * focus, editor draft, and viewport when the route closes.
+	 */
+	fullscreen?: boolean;
+	/** Overlay positioning/sizing options. Can be static or a function for dynamic updates. */
+	overlayOptions?: OverlayOptions | (() => OverlayOptions);
+	/** Called with the overlay handle after the overlay is shown. Use to control visibility. */
+	onHandle?: (handle: OverlayHandle) => void;
+	/**
+	 * Report pi as blocked on user input (OSC 7501 program status) while this component waits for input.
+	 * Inline components report it while visible. Overlays report it until `done()` is called, also while
+	 * hidden with `setHidden()`.
+	 */
+	blocked?: { kind: NonNullable<ProgramStatus["kind"]>; message: string };
 }
 
 /** Wrap the current autocomplete provider with additional behavior. */
@@ -204,7 +226,7 @@ export interface ExtensionUIContext {
 	/** Set the label shown for hidden thinking blocks. Call with no argument to restore default. */
 	setHiddenThinkingLabel(label?: string): void;
 
-	/** Set a widget to display above or below the editor. Accepts string array or component factory. */
+	/** Set a widget above the status row, above the editor, or below the editor. Accepts strings or a component factory. */
 	setWidget(key: string, content: string[] | undefined, options?: ExtensionWidgetOptions): void;
 	setWidget(
 		key: string,
@@ -238,19 +260,7 @@ export interface ExtensionUIContext {
 			keybindings: KeybindingsManager,
 			done: (result: T) => void,
 		) => (Component & { dispose?(): void }) | Promise<Component & { dispose?(): void }>,
-		options?: {
-			overlay?: boolean;
-			/** Overlay positioning/sizing options. Can be static or a function for dynamic updates. */
-			overlayOptions?: OverlayOptions | (() => OverlayOptions);
-			/** Called with the overlay handle after the overlay is shown. Use to control visibility. */
-			onHandle?: (handle: OverlayHandle) => void;
-			/**
-			 * Report pi as blocked on user input (OSC 7501 program status) while this component waits for input.
-			 * Inline components report it while visible. Overlays report it until `done()` is called, also while
-			 * hidden with `setHidden()`.
-			 */
-			blocked?: { kind: NonNullable<ProgramStatus["kind"]>; message: string };
-		},
+		options?: ExtensionUICustomOptions,
 	): Promise<T>;
 
 	/** Paste text into the editor, triggering paste handling (collapse for large content). */
