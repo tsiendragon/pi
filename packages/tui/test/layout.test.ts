@@ -90,6 +90,29 @@ describe("viewport layout", () => {
 		assert.deepStrictEqual(visibleLines(frame.lines), ["visible 1", "visible 2", "visible 3"]);
 	});
 
+	it("shrinks the footer before a focused editor in a compact dock", () => {
+		const editor = new Text("editor 1\neditor 2\neditor 3\neditor 4", 0, 0);
+		const footer = new Text("footer", 0, 0);
+		const dock = new VStack([
+			{ component: editor, shrink: 0, minSize: 3 },
+			{ component: footer, shrink: 1, minSize: 0 },
+		]);
+		const frame = renderLayoutFrame(
+			new VStack([
+				{ component: new Text("transcript", 0, 0), basis: 0, grow: 1, shrink: 1, minSize: 1 },
+				{ component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
+			]),
+			20,
+			5,
+			() => {},
+		);
+
+		const dockBox = frame.root.children[1]!;
+		assert.strictEqual(dockBox.rect.y, 1);
+		assert.strictEqual(dockBox.children[0]!.rect.height, 4);
+		assert.strictEqual(dockBox.children[1]!.rect.height, 0);
+	});
+
 	it("shrinks entries to their minimum sizes", () => {
 		const frame = renderLayoutFrame(
 			new VStack([

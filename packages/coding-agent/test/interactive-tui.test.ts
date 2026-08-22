@@ -49,7 +49,7 @@ class RecordingTerminal extends VirtualTerminal implements Terminal {
 }
 
 describe("createInteractiveTui", () => {
-	it("selects the alternate-screen renderer only when requested", async () => {
+	it("uses a regular main-screen viewport unless alternate screen is requested", async () => {
 		const mainTerminal = new RecordingTerminal();
 		const mainTui = createInteractiveTui({
 			tuiMode: "regular",
@@ -58,7 +58,7 @@ describe("createInteractiveTui", () => {
 			terminal: mainTerminal,
 		});
 		expect(mainTui.mode).toBe("regular");
-		expect(isViewportTUI(mainTui)).toBe(false);
+		expect(isViewportTUI(mainTui)).toBe(true);
 		mainTui.start();
 		await mainTerminal.waitForRender();
 		expect(mainTerminal.writes.some((write) => write.includes("\x1b[?1049h"))).toBe(false);

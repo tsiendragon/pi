@@ -3204,17 +3204,11 @@ export class InteractiveMode {
 			if (previousMode !== "fullscreen" && !this.switchTuiMode("fullscreen")) {
 				throw new Error("Unable to switch to fullscreen TUI mode");
 			}
-			if (!TuiLayouts.isViewportTUI(this.renderer)) {
-				if (previousMode !== this.renderer.mode) this.switchTuiMode(previousMode);
-				throw new Error("Fullscreen extension UI requires a viewport TUI");
-			}
 		}
 
 		const restoreFullscreen = () => {
 			if (!previousMode) throw new Error("Fullscreen route has no previous TUI mode");
-			if (TuiLayouts.isViewportTUI(this.renderer)) {
-				this.renderer.setLayoutRoot(this.fullscreenLayoutRoot);
-			}
+			this.renderer.setLayoutRoot(this.fullscreenLayoutRoot);
 			if (this.renderer.mode !== previousMode && !this.switchTuiMode(previousMode)) {
 				throw new Error(`Unable to restore ${previousMode} TUI mode`);
 			}
@@ -3300,9 +3294,6 @@ export class InteractiveMode {
 						// Expose handle to caller for visibility control
 						options?.onHandle?.(overlayHandle);
 					} else if (isFullscreen) {
-						if (!TuiLayouts.isViewportTUI(this.renderer)) {
-							throw new Error("Fullscreen extension UI lost its viewport TUI");
-						}
 						this.disposeActiveSelector();
 						this.renderer.setLayoutRoot(c);
 						this.ui.setFocus(c);
