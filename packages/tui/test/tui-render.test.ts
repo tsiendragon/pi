@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Image } from "../src/components/image.ts";
+import { ScrollView } from "../src/components/scroll-view.ts";
+import { Text } from "../src/components/text.ts";
+import { VStack } from "../src/components/v-stack.ts";
 import type { Terminal } from "../src/terminal.ts";
 import {
 	deleteKittyImage,
@@ -112,6 +115,71 @@ function getCellItalic(terminal: VirtualTerminal, row: number, col: number): num
 	assert.ok(cell, `Missing cell at row ${row} col ${col}`);
 	return cell.isItalic();
 }
+
+describe("regular fixed layout", () => {
+	it("keeps the dock at the bottom without entering alternate screen", async () => {
+		const terminal = new LoggingVirtualTerminal(30, 6);
+		const tui = new TuiMainScreen(terminal);
+		const dock = new VStack([new Text("input", 0, 0), new Text("footer", 0, 0)]);
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: new Text("transcript", 0, 0), basis: 0, grow: 1 },
+				{ component: dock, basis: "auto" },
+			]),
+		);
+
+		tui.start();
+		await terminal.waitForRender();
+
+		const viewport = terminal.getViewport();
+		assert.strictEqual(tui.mode, "regular");
+		assert.ok(!terminal.getWrites().includes("\u001b[?1049h"));
+		assert.strictEqual(viewport.at(-2)?.trim(), "input");
+		assert.strictEqual(viewport.at(-1)?.trim(), "footer");
+		tui.stop();
+	});
+
+	it("scrolls the transcript while keeping the dock fixed", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 6);
+		const tui = new TuiMainScreen(terminal);
+		const transcriptText = new Text(Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0);
+		const transcript = new ScrollView(transcriptText, { follow: "end", primary: true });
+		const dock = new VStack([new Text("editor", 0, 0), new Text("footer", 0, 0)]);
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: transcript, basis: 0, grow: 1, minSize: 1 },
+				{ component: dock, basis: "auto", minSize: 1 },
+			]),
+		);
+
+		tui.start();
+		await terminal.waitForRender();
+		assert.deepStrictEqual(
+			terminal.getViewport().map((line) => line.trimEnd()),
+			["line 5", "line 6", "line 7", "line 8", "editor", "footer"],
+		);
+		assert.ok(terminal.getWrites().includes("\u001b[?1000h\u001b[?1006h"));
+
+		terminal.sendInput("\x1b[<64;1;1M");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(
+			terminal.getViewport().map((line) => line.trimEnd()),
+			["line 4", "line 5", "line 6", "line 7", "editor", "footer"],
+		);
+		assert.strictEqual(transcript.isFollowingEnd, false);
+
+		transcriptText.setText(Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n"));
+		tui.requestRender();
+		await terminal.waitForRender();
+		assert.deepStrictEqual(
+			terminal.getViewport().map((line) => line.trimEnd()),
+			["line 4", "line 5", "line 6", "line 7", "editor", "footer"],
+		);
+
+		tui.stop();
+		assert.ok(terminal.getWrites().includes("\u001b[?1006l\u001b[?1000l"));
+	});
+});
 
 describe("TUI render scheduling", () => {
 	it("renders keyboard input without waiting for a throttled frame", async () => {

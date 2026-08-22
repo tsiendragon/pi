@@ -547,6 +547,16 @@ export class Editor implements Component, Focusable {
 		const leftPadding = " ".repeat(paddingX);
 		const rightPadding = leftPadding;
 
+		// Add autocomplete list above the editor so the menu opens upward from the prompt.
+		if (this.autocompleteState && this.autocompleteList) {
+			const autocompleteResult = this.autocompleteList.render(contentWidth);
+			for (const line of autocompleteResult) {
+				const lineWidth = visibleWidth(line);
+				const linePadding = " ".repeat(Math.max(0, contentWidth - lineWidth));
+				result.push(`${leftPadding}${line}${linePadding}${rightPadding}`);
+			}
+		}
+
 		// Render top border (with scroll indicator if scrolled down)
 		result.push(this.renderTopBorder(width, this.scrollOffset));
 
@@ -602,18 +612,12 @@ export class Editor implements Component, Focusable {
 		const linesBelow = layoutLines.length - (this.scrollOffset + visibleLines.length);
 		result.push(this.renderBottomBorder(width, linesBelow));
 
-		// Add autocomplete list if active
+		// The autocomplete list is now painted ABOVE the editor (see above), so do not
+		// render it again here. Track only its height for mouse hit-testing / output size.
 		this.renderedAutocompleteHeight = 0;
 		if (this.autocompleteState && this.autocompleteList) {
-			const autocompleteResult = this.autocompleteList.render(contentWidth);
-			this.renderedAutocompleteHeight = autocompleteResult.length;
-			for (const line of autocompleteResult) {
-				const lineWidth = visibleWidth(line);
-				const linePadding = " ".repeat(Math.max(0, contentWidth - lineWidth));
-				result.push(`${leftPadding}${line}${linePadding}${rightPadding}`);
-			}
+			this.renderedAutocompleteHeight = this.autocompleteList.render(contentWidth).length;
 		}
-
 		return result;
 	}
 

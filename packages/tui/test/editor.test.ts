@@ -2214,6 +2214,32 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.isShowingAutocomplete(), false);
 		});
 
+		it("renders autocomplete suggestions above the editor input", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const mockProvider: AutocompleteProvider = {
+				getSuggestions: async () => ({
+					items: [
+						{ value: "/settings", label: "/settings" },
+						{ value: "/session", label: "/session" },
+					],
+					prefix: "/",
+				}),
+				applyCompletion,
+			};
+
+			editor.setAutocompleteProvider(mockProvider);
+			editor.handleInput("/");
+			editor.handleInput("\t");
+			await flushAutocomplete();
+
+			const lines = editor.render(80).map(stripVTControlCharacters);
+			const suggestionIndex = lines.findIndex((line) => line.includes("/settings"));
+			const topBorderIndex = lines.indexOf("─".repeat(80));
+			assert.ok(suggestionIndex >= 0, "autocomplete suggestion should be rendered");
+			assert.ok(suggestionIndex < topBorderIndex, "autocomplete suggestion should be above the editor top border");
+			assert.strictEqual(lines.at(-1), "─".repeat(80), "the editor bottom border should remain the final line");
+		});
+
 		it("keeps suggestions open when typing in force mode (Tab-triggered)", async () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 

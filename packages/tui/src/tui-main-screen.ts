@@ -1,9 +1,21 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { ScrollView } from "./components/scroll-view.ts";
+import { getKeybindings } from "./keybindings.ts";
+import { isKeyRelease } from "./keys.ts";
+import { getScrollViewsAt, type LayoutFrame, renderLayoutFrame } from "./layout.ts";
+import type { Terminal } from "./terminal.ts";
 import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
-import { type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
-import { visibleWidth } from "./utils.ts";
+import {
+	type Component,
+	TuiBase,
+	type TuiInputListenerResult,
+	type TuiStopOptions,
+	VIEWPORT_TUI,
+	type ViewportTUI,
+} from "./tui.ts";
+import { sliceByColumn, visibleWidth } from "./utils.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
@@ -73,6 +85,10 @@ class BoundedTerminalWriter {
 	}
 }
 
+const ENABLE_VIEWPORT_MOUSE = "\x1b[?1000h\x1b[?1006h";
+const DISABLE_VIEWPORT_MOUSE = "\x1b[?1006l\x1b[?1000l";
+const PAGE_SCROLL_OVERLAP = 4;
+
 interface KittyImageHeader {
 	ids: number[];
 	rows: number;
@@ -110,6 +126,12 @@ function isTermuxSession(): boolean {
 	return Boolean(process.env.TERMUX_VERSION);
 }
 
+interface WheelEvent {
+	direction: number;
+	x: number;
+	y: number;
+}
+
 export interface TuiMainScreenRenderState {
 	previousLines: string[];
 	previousWidth: number;
@@ -121,8 +143,13 @@ export interface TuiMainScreenRenderState {
 }
 
 /** TUI implementation that renders into the terminal's main screen and scrollback. */
-export class TuiMainScreen extends TuiBase implements TUI {
+export class TuiMainScreen extends TuiBase implements ViewportTUI {
 	readonly mode = "regular" as const;
+	readonly [VIEWPORT_TUI] = true as const;
+	private layoutRoot: Component | undefined;
+	private currentLayout: LayoutFrame | undefined;
+	private terminalActive = false;
+	private viewportMouseEnabled = false;
 	private previousLines: string[] = [];
 	private previousKittyImageIds = new Set<number>();
 	private previousWidth = 0;
@@ -131,6 +158,51 @@ export class TuiMainScreen extends TuiBase implements TUI {
 	private hardwareCursorRow = 0;
 	private maxLinesRendered = 0;
 	private previousViewportTop = 0;
+
+	constructor(terminal: Terminal, showHardwareCursor?: boolean, logDirectory?: string) {
+		super(terminal, showHardwareCursor, logDirectory);
+		this.addInputListener((data) => this.handleViewportInput(data));
+	}
+
+	setLayoutRoot(component: Component | undefined): void {
+		if (this.layoutRoot === component) return;
+		this.layoutRoot = component;
+		this.currentLayout = undefined;
+		if (this.terminalActive) {
+			if (component) this.enableViewportMouse();
+			else this.disableViewportMouse();
+		}
+		this.resetRenderState();
+		this.requestRender();
+	}
+
+	override render(width: number): string[] {
+		return this.layoutRoot?.render(width) ?? super.render(width);
+	}
+
+	protected override getMountedRoots(): readonly Component[] {
+		return this.layoutRoot ? [this.layoutRoot] : this.children;
+	}
+
+	protected override beforeTerminalStart(): void {
+		if (this.layoutRoot) this.enableViewportMouse();
+	}
+
+	protected override afterTerminalStart(): void {
+		this.terminalActive = true;
+	}
+
+	private enableViewportMouse(): void {
+		if (this.viewportMouseEnabled) return;
+		this.terminal.write(ENABLE_VIEWPORT_MOUSE);
+		this.viewportMouseEnabled = true;
+	}
+
+	private disableViewportMouse(): void {
+		if (!this.viewportMouseEnabled) return;
+		this.terminal.write(DISABLE_VIEWPORT_MOUSE);
+		this.viewportMouseEnabled = false;
+	}
 
 	captureRenderState(): TuiMainScreenRenderState {
 		return {
@@ -166,6 +238,8 @@ export class TuiMainScreen extends TuiBase implements TUI {
 	}
 
 	protected override beforeTerminalStop(options: TuiStopOptions): void {
+		this.terminalActive = false;
+		this.disableViewportMouse();
 		if (options.preserveScreen || this.previousLines.length === 0) return;
 		this.terminal.write(" ");
 		const targetRow = this.previousLines.length;
@@ -244,8 +318,172 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		return this.deleteKittyImages(ids);
 	}
 
+	private doViewportRender(): void {
+		const root = this.layoutRoot;
+		if (!root) return;
+
+		const width = Math.max(1, this.terminal.columns);
+		const height = Math.max(1, this.terminal.rows);
+		const layout = renderLayoutFrame(root, width, height, () => this.requestRender());
+		this.currentLayout = layout;
+		let screen = layout.lines;
+		if (this.hasOverlayEntries) {
+			screen = this.compositeOverlays(screen, width, height);
+		}
+		if (screen.length > height) screen = screen.slice(screen.length - height);
+		while (screen.length < height) screen.push("");
+
+		const cursorPos = this.extractCursorPosition(screen, height);
+		screen = this.applyLineResets(screen).map((line) => {
+			if (isImageLine(line) || visibleWidth(line) <= width) return line;
+			return sliceByColumn(line, 0, width, true);
+		});
+
+		const fullRedraw =
+			this.previousLines.length === 0 || this.previousWidth !== width || this.previousHeight !== height;
+		let firstChanged = -1;
+		let lastChanged = -1;
+		for (let row = 0; row < height; row++) {
+			if (fullRedraw || screen[row] !== this.previousLines[row]) {
+				if (firstChanged === -1) firstChanged = row;
+				lastChanged = row;
+			}
+		}
+
+		let buffer = "\u001b[?2026h";
+		if (fullRedraw) {
+			this.fullRedrawCount += 1;
+			buffer += this.deleteKittyImages(this.previousKittyImageIds);
+			buffer += "\u001b[2J\u001b[H";
+		} else if (firstChanged !== -1) {
+			buffer += this.deleteChangedKittyImages(firstChanged, lastChanged);
+		}
+
+		let hardwareCursorRow = this.hardwareCursorRow;
+		for (let row = 0; row < height; row++) {
+			if (!fullRedraw && screen[row] === this.previousLines[row]) continue;
+			buffer += `\u001b[${row + 1};1H\u001b[2K${screen[row] ?? ""}`;
+			hardwareCursorRow = row;
+		}
+		buffer += "\u001b[?2026l";
+		this.terminal.write(buffer);
+
+		this.cursorRow = height - 1;
+		this.hardwareCursorRow = hardwareCursorRow;
+		this.maxLinesRendered = height;
+		this.previousViewportTop = 0;
+		this.positionHardwareCursor(cursorPos, height);
+		this.previousLines = screen;
+		this.previousKittyImageIds = this.collectKittyImageIds(screen);
+		this.previousWidth = width;
+		this.previousHeight = height;
+	}
+
+	private getPrimaryScrollView(): ScrollView | undefined {
+		return this.currentLayout?.primaryScrollView;
+	}
+
+	private handleViewportInput(data: string): TuiInputListenerResult {
+		if (!this.layoutRoot) return undefined;
+
+		const wheelEvent = this.parseWheelEvent(data);
+		if (wheelEvent) {
+			if (this.isOverlayFocused()) return undefined;
+			this.routeWheel(wheelEvent);
+			return { consume: true };
+		}
+		if (this.isMouseSequence(data)) return { consume: true };
+		if (this.isOverlayFocused()) return undefined;
+
+		const scrollView = this.getPrimaryScrollView();
+		if (!scrollView) return undefined;
+		const keybindings = getKeybindings();
+		const isRelease = isKeyRelease(data);
+		if (keybindings.matches(data, "tui.altScreen.pageUp")) {
+			if (!isRelease) scrollView.scrollBy(-Math.max(1, scrollView.viewportHeight - PAGE_SCROLL_OVERLAP));
+			return { consume: true };
+		}
+		if (keybindings.matches(data, "tui.altScreen.pageDown")) {
+			if (!isRelease) scrollView.scrollBy(Math.max(1, scrollView.viewportHeight - PAGE_SCROLL_OVERLAP));
+			return { consume: true };
+		}
+		if (keybindings.matches(data, "tui.altScreen.halfPageUp")) {
+			if (!isRelease) scrollView.scrollBy(-Math.max(1, Math.floor(scrollView.viewportHeight / 2)));
+			return { consume: true };
+		}
+		if (keybindings.matches(data, "tui.altScreen.halfPageDown")) {
+			if (!isRelease) scrollView.scrollBy(Math.max(1, Math.floor(scrollView.viewportHeight / 2)));
+			return { consume: true };
+		}
+		if (keybindings.matches(data, "tui.altScreen.lineUp")) {
+			if (!isRelease) scrollView.scrollBy(-1);
+			return { consume: true };
+		}
+		if (keybindings.matches(data, "tui.altScreen.lineDown")) {
+			if (!isRelease) scrollView.scrollBy(1);
+			return { consume: true };
+		}
+		if (keybindings.matches(data, "tui.altScreen.top")) {
+			if (!isRelease) scrollView.scrollToStart();
+			return { consume: true };
+		}
+		if (keybindings.matches(data, "tui.altScreen.bottom")) {
+			if (!isRelease) scrollView.scrollToEnd();
+			return { consume: true };
+		}
+		return undefined;
+	}
+
+	private parseWheelEvent(data: string): WheelEvent | undefined {
+		const sgr = /^\x1b\[<(\d+);(\d+);(\d+)[Mm]$/.exec(data);
+		if (sgr) {
+			const button = Number.parseInt(sgr[1], 10);
+			if ((button & 64) === 0) return undefined;
+			const direction = button & 3;
+			if (direction !== 0 && direction !== 1) return undefined;
+			return {
+				direction: direction === 0 ? -1 : 1,
+				x: Number.parseInt(sgr[2], 10) - 1,
+				y: Number.parseInt(sgr[3], 10) - 1,
+			};
+		}
+		if (data.length === 6 && data.startsWith("\x1b[M")) {
+			const button = data.charCodeAt(3) - 32;
+			if ((button & 64) === 0) return undefined;
+			const direction = button & 3;
+			if (direction !== 0 && direction !== 1) return undefined;
+			return {
+				direction: direction === 0 ? -1 : 1,
+				x: data.charCodeAt(4) - 33,
+				y: data.charCodeAt(5) - 33,
+			};
+		}
+		return undefined;
+	}
+
+	private isMouseSequence(data: string): boolean {
+		return /^\x1b\[<\d+;\d+;\d+[Mm]$/.test(data) || (data.length === 6 && data.startsWith("\x1b[M"));
+	}
+
+	private routeWheel(event: WheelEvent): void {
+		let remaining = event.direction;
+		const seen = new Set<ScrollView>();
+		for (const scrollView of this.currentLayout ? getScrollViewsAt(this.currentLayout, event.x, event.y) : []) {
+			seen.add(scrollView);
+			remaining = scrollView.scrollBy(remaining);
+			if (remaining === 0 || scrollView.overscroll === "contain") break;
+		}
+		const primary = this.getPrimaryScrollView();
+		if (primary && remaining !== 0 && !seen.has(primary)) primary.scrollBy(remaining);
+		this.requestRender();
+	}
+
 	protected doRender(): void {
 		if (this.stopped) return;
+		if (this.layoutRoot) {
+			this.doViewportRender();
+			return;
+		}
 		const width = this.terminal.columns;
 		const height = this.terminal.rows;
 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
