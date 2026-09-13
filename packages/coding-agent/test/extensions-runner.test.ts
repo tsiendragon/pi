@@ -1062,4 +1062,80 @@ describe("ExtensionRunner", () => {
 			expect(errors[0].error).toContain("header handler boom");
 		});
 	});
+
+	describe("extension UI requests", () => {
+		const makePendingUIContext = (): ExtensionUIContext =>
+			({
+				select: () => new Promise(() => {}),
+				confirm: () => new Promise(() => {}),
+				input: () => new Promise(() => {}),
+				editor: () => new Promise(() => {}),
+			}) as any;
+
+		const loadRunner = async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+			runner.setUIContext(makePendingUIContext());
+			return runner;
+		};
+
+		it("emits extension_ui and resolves with the first extension answer", async () => {
+			fs.writeFileSync(
+				path.join(extensionsDir, "ui-bridge.ts"),
+				`export default function(pi) {
+	pi.on("extension_ui", (event) => {
+		if (!event.closed && event.method === "select") {
+			pi.respondExtensionUi(event.id, { value: "picked-by-extension" });
+		}
+	});
+}`,
+			);
+
+			const runner = await loadRunner();
+			const answer = await runner.createContext().ui.select("Pick one", ["a", "b"]);
+			expect(answer).toBe("picked-by-extension");
+		});
+
+		it("lets the first respondUi win and ignores later answers", async () => {
+			const events: Array<{ id: string; closed?: boolean }> = [];
+			(globalThis as any).__uiEventsForTest = events;
+			try {
+				fs.writeFileSync(
+					path.join(extensionsDir, "ui-recorder.ts"),
+					`export default function(pi) {
+	pi.on("extension_ui", (event) => {
+		globalThis.__uiEventsForTest.push({ id: event.id, closed: event.closed });
+	});
+}`,
+				);
+
+				const runner = await loadRunner();
+				const promise = runner.createContext().ui.select("Pick", ["a", "b"]);
+				await vi.waitFor(() => expect(events.length).toBeGreaterThan(0));
+				const id = events[0]?.id;
+				expect(id).toBeDefined();
+
+				expect(runner.respondUi(id as string, { value: "first" })).toBe(true);
+				expect(runner.respondUi(id as string, { value: "second" })).toBe(false);
+				expect(await promise).toBe("first");
+			} finally {
+				delete (globalThis as any).__uiEventsForTest;
+			}
+		});
+
+		it("times out to the fallback when no channel answers", async () => {
+			const runner = await loadRunner();
+			const answer = await runner.createContext().ui.select("Pick", ["a", "b"], { timeout: 20 });
+			expect(answer).toBeUndefined();
+		});
+
+		it("aborts to the fallback on the caller signal", async () => {
+			const runner = await loadRunner();
+			const controller = new AbortController();
+			const promise = runner.createContext().ui.select("Pick", ["a", "b"], { signal: controller.signal });
+			controller.abort();
+			expect(await promise).toBeUndefined();
+		});
+	});
 });

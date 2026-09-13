@@ -231,7 +231,7 @@ export interface ExtensionUIContext {
 	getEditorText(): string;
 
 	/** Show a multi-line editor for text editing. */
-	editor(title: string, prefill?: string): Promise<string | undefined>;
+	editor(title: string, prefill?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
 
 	/** Stack additional autocomplete behavior on top of the built-in provider. */
 	addAutocompleteProvider(factory: AutocompleteProviderFactory): void;
@@ -770,6 +770,31 @@ export interface UIPromptEndEvent {
 	title?: string;
 }
 
+/** Response to a session-level extension UI request (first responder wins). */
+export interface ExtensionUiResponse {
+	value?: any;
+	cancelled?: boolean;
+}
+
+/**
+ * A session-level UI request emitted whenever an extension calls
+ * ctx.ui.select/confirm/input/editor. Any channel (TUI overlay, RPC transport,
+ * or a bridge extension such as live-session) may observe it and answer via
+ * `respondExtensionUi(id, ...)`; the first answer resolves the pending request.
+ */
+export interface ExtensionUiRequestEvent {
+	type: "extension_ui";
+	id: string;
+	method: "confirm" | "select" | "input" | "editor";
+	title: string;
+	message?: string;
+	options?: string[];
+	prefill?: string;
+	placeholder?: string;
+	/** True when this event closes a previously emitted request (the first answer won). */
+	closed?: boolean;
+}
+
 /** Fired at the start of each turn */
 export interface TurnStartEvent {
 	type: "turn_start";
@@ -1119,6 +1144,7 @@ export type ExtensionEvent =
 	| ThinkingLevelSelectEvent
 	| UserBashEvent
 	| InputEvent
+	| ExtensionUiRequestEvent
 	| ToolCallEvent
 	| ToolResultEvent;
 
@@ -1295,6 +1321,7 @@ export interface ExtensionAPI {
 	on(event: "agent_settled", handler: ExtensionHandler<AgentSettledEvent>): void;
 	on(event: "ui_prompt_start", handler: ExtensionHandler<UIPromptStartEvent>): void;
 	on(event: "ui_prompt_end", handler: ExtensionHandler<UIPromptEndEvent>): void;
+	on(event: "extension_ui", handler: ExtensionHandler<ExtensionUiRequestEvent>): void;
 	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): void;
 	on(event: "turn_end", handler: ExtensionHandler<TurnEndEvent>): void;
 	on(event: "message_start", handler: ExtensionHandler<MessageStartEvent>): void;
@@ -1309,6 +1336,17 @@ export interface ExtensionAPI {
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
 	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): void;
+
+	// =========================================================================
+	// UI Request Response
+	// =========================================================================
+
+	/**
+	 * Answer a pending session-level UI request by id (emitted via the "extension_ui"
+	 * event). Returns true when this is the winning (first) answer; false when the
+	 * request was already answered, timed out, or aborted.
+	 */
+	respondExtensionUi(id: string, response: ExtensionUiResponse): boolean;
 
 	// =========================================================================
 	// Tool Registration
@@ -1803,7 +1841,10 @@ export interface ExtensionCommandContextActions {
  * Full runtime = state + actions.
  * Created by loader with throwing action stubs, completed by runner.initialize().
  */
-export interface ExtensionRuntime extends ExtensionRuntimeState, ExtensionActions {}
+export interface ExtensionRuntime extends ExtensionRuntimeState, ExtensionActions {
+	/** Answer a pending session-level extension UI request. Bound by runner.bindCore to runner.respondUi. */
+	respondExtensionUi: (id: string, response: ExtensionUiResponse) => boolean;
+}
 
 /** Loaded extension with all registered items. */
 export interface Extension {
