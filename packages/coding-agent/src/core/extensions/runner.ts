@@ -58,6 +58,9 @@ import type {
 	ExtensionShortcut,
 	ExtensionToolContext,
 	ExtensionUIContext,
+	ExtensionUIDialogOptions,
+	ExtensionUiRequestEvent,
+	ExtensionUiResponse,
 	InputEvent,
 	InputEventResult,
 	InputSource,
@@ -366,6 +369,8 @@ export class ExtensionRunner {
 	private extensions: Extension[];
 	private runtime: ExtensionRuntime;
 	private uiContext: ExtensionUIContext;
+	/** Session-level UI requests awaiting a first answer (select/confirm/input/editor). */
+	private pendingUi = new Map<string, { resolve: (value: any) => void; event: ExtensionUiRequestEvent }>();
 	private mode: ExtensionMode = "print";
 	private cwd: string;
 	private sessionManager: SessionManager;
@@ -448,6 +453,7 @@ export class ExtensionRunner {
 		this.runtime.getThinkingLevel = actions.getThinkingLevel;
 		this.runtime.setThinkingLevel = actions.setThinkingLevel;
 		this.runtime.createContext = () => this.createContext();
+		this.runtime.respondExtensionUi = (id, response) => this.respondUi(id, response);
 
 		// Context actions (required)
 		this.getModel = contextActions.getModel;
@@ -583,13 +589,111 @@ export class ExtensionRunner {
 	private wrapUIPromptContext(ui: ExtensionUIContext): ExtensionUIContext {
 		return {
 			...ui,
-			select: (title, options, opts) => this.withUIPrompt("select", title, () => ui.select(title, options, opts)),
-			confirm: (title, message, opts) => this.withUIPrompt("confirm", title, () => ui.confirm(title, message, opts)),
+			select: (title, options, opts) =>
+				this.withUIPrompt("select", title, () =>
+					this.requestUi("select", { title, options }, opts, undefined, (signal) =>
+						ui.select(title, options, { ...opts, signal }),
+					),
+				),
+			confirm: (title, message, opts) =>
+				this.withUIPrompt("confirm", title, () =>
+					this.requestUi("confirm", { title, message }, opts, false, (signal) =>
+						ui.confirm(title, message, { ...opts, signal }),
+					),
+				),
 			input: (title, placeholder, opts) =>
-				this.withUIPrompt("input", title, () => ui.input(title, placeholder, opts)),
-			editor: (title, prefill) => this.withUIPrompt("editor", title, () => ui.editor(title, prefill)),
+				this.withUIPrompt("input", title, () =>
+					this.requestUi("input", { title, placeholder }, opts, undefined, (signal) =>
+						ui.input(title, placeholder, { ...opts, signal }),
+					),
+				),
+			editor: (title, prefill, opts) =>
+				this.withUIPrompt("editor", title, () =>
+					this.requestUi("editor", { title, prefill }, opts, undefined, (signal) =>
+						ui.editor(title, prefill, { ...opts, signal }),
+					),
+				),
 			custom: (factory, options) => this.withUIPrompt("custom", undefined, () => ui.custom(factory, options)),
 		};
+	}
+
+	/**
+	 * Start a session-level UI request and wait for the first answer.
+	 * Emits a "extension_ui" event so other channels (TUI overlay, RPC transport,
+	 * live-session bridge) can observe it, then renders through the current mode's
+	 * implementation. The first of {mode answer, respondUi, timeout, caller abort}
+	 * wins; on settle the internal signal aborts the mode's rendering and a
+	 * closing "extension_ui" event (`closed: true`) is emitted.
+	 */
+	private requestUi<T>(
+		method: ExtensionUiRequestEvent["method"],
+		params: {
+			title: string;
+			options?: string[];
+			message?: string;
+			placeholder?: string;
+			prefill?: string;
+		},
+		opts: ExtensionUIDialogOptions | undefined,
+		fallback: T,
+		render: (signal: AbortSignal) => Promise<T>,
+	): Promise<T> {
+		if (opts?.signal?.aborted) return Promise.resolve(fallback);
+
+		const id = crypto.randomUUID();
+		const controller = new AbortController();
+		const event: ExtensionUiRequestEvent = {
+			type: "extension_ui",
+			id,
+			method,
+			title: params.title,
+			...(params.message !== undefined ? { message: params.message } : {}),
+			...(params.options !== undefined ? { options: params.options } : {}),
+			...(params.placeholder !== undefined ? { placeholder: params.placeholder } : {}),
+			...(params.prefill !== undefined ? { prefill: params.prefill } : {}),
+		};
+
+		return new Promise<T>((resolve) => {
+			let settled = false;
+			let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+			const settle = (value: T): void => {
+				if (settled) return;
+				settled = true;
+				if (timeoutId !== undefined) clearTimeout(timeoutId);
+				opts?.signal?.removeEventListener("abort", onCallerAbort);
+				this.pendingUi.delete(id);
+				controller.abort();
+				void this.emit({ ...event, closed: true });
+				resolve(value);
+			};
+
+			const onCallerAbort = (): void => {
+				settle(fallback);
+			};
+			opts?.signal?.addEventListener("abort", onCallerAbort, { once: true });
+
+			if (opts?.timeout !== undefined) {
+				timeoutId = setTimeout(() => settle(fallback), opts.timeout);
+			}
+
+			this.pendingUi.set(id, { resolve: (value: unknown) => settle(value as T), event });
+
+			void this.emit(event);
+
+			render(controller.signal).then(settle, () => settle(fallback));
+		});
+	}
+
+	/**
+	 * Answer a pending session-level UI request by id. Returns true when this is
+	 * the first (winning) answer; false when the request was already settled.
+	 */
+	respondUi(id: string, response: ExtensionUiResponse): boolean {
+		const entry = this.pendingUi.get(id);
+		if (!entry) return false;
+		entry.resolve(response.cancelled ? undefined : response.value);
+		return true;
 	}
 
 	private withUIPrompt<T>(kind: UIPromptKind, title: string | undefined, run: () => Promise<T>): Promise<T> {

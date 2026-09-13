@@ -2900,7 +2900,7 @@ export class InteractiveMode {
 				this.ui.requestRender();
 			},
 			getEditorText: () => this.editor.getExpandedText?.() ?? this.editor.getText(),
-			editor: (title, prefill) => this.showExtensionEditor(title, prefill),
+			editor: (title, prefill, opts) => this.showExtensionEditor(title, prefill, opts),
 			addAutocompleteProvider: (factory) => {
 				this.autocompleteProviderWrappers.push(factory);
 				this.setupAutocompleteProvider();
@@ -3056,12 +3056,25 @@ export class InteractiveMode {
 	/**
 	 * Show a multi-line editor for extensions (with Ctrl+G support).
 	 */
-	private showExtensionEditor(title: string, prefill?: string): Promise<string | undefined> {
+	private showExtensionEditor(
+		title: string,
+		prefill?: string,
+		opts?: ExtensionUIDialogOptions,
+	): Promise<string | undefined> {
 		return new Promise((resolve) => {
+			if (opts?.signal?.aborted) {
+				resolve(undefined);
+				return;
+			}
+
 			const finish = (value: string | undefined) => {
+				opts?.signal?.removeEventListener("abort", onAbort);
 				this.removeExtensionDialog(editor);
 				resolve(value);
 			};
+			const onAbort = () => finish(undefined);
+			opts?.signal?.addEventListener("abort", onAbort, { once: true });
+
 			const editor = new ExtensionEditorComponent(
 				this.ui,
 				this.keybindings,
