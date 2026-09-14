@@ -156,6 +156,59 @@ Attribution:
 
 For release preparation, publishing, verification, or recovery, load and follow [.pi/skills/release.md](.pi/skills/release.md).
 
+## Local Install on the tsien machine
+
+The tsien DSW machine keeps repositories on an NFS NAS (`/mnt/workspace`, aliyun NAS
+over NFSv3). NFS attribute/page-cache expiry makes cold reads slow, which used to add
+8-15s to pi startup. This was **not** caused by extensions: a full run with `-ne`
+(no extensions) still hit 10s on a cold cache.
+
+Measured 2026-09-14 (TUI first frame, same cwd, 120s idle before the cold run):
+
+| Setup | Cold | Warm |
+| --- | --- | --- |
+| pi on NFS + extensions on NFS | 8.8-14.6s | 3.0-3.1s |
+| pi on local disk + extensions on NFS | 1.16-2.48s | 1.14-1.43s |
+| pi + extensions on local disk | 1.10s | 0.98-1.10s |
+
+Current setup (pi 0.85.1 installed on the local overlay disk):
+
+```text
+~/.local/bin/pi                      -> exec /home/tsien/local-pi/bin/pi "$@"
+/home/tsien/local-pi                 -> local npm prefix install
+~/.local/bin/pi.bak-20260914-184016  -> previous NFS launcher (rollback point)
+```
+
+Local pi artifacts (each directory has its own README.md):
+
+```text
+~/pi-lical-dist/        offline install source: 10 x 0.85.1 tgz (snapshot of release tarballs/)
+~/pi-local-release/     `npm run release:local --out ...` output: tarballs/ + node/
+                        rebuilt with --force -> never store important files here
+```
+
+The interactive `pi` alias (`pi-clean`) calls `~/.local/bin/pi`, so that wrapper is the
+effective launcher. Already-running sessions keep their in-memory code; only newly
+started processes pick up the local install. Extensions still live on NFS (about
+0.4-1.5s of startup); localizing them is tracked in `/home/tsien/PLAN-repo-localization.md`.
+
+The conda install (`.../conda/envs/nodejs/bin/pi`) and `pi-local-release` still point at
+NFS and stay slow; prefer the `~/.local/bin/pi` wrapper.
+
+Update the local install after a release:
+
+```bash
+npm install -g --prefix /home/tsien/local-pi @earendil-works/pi-coding-agent@latest
+npm install -g --prefix /home/tsien/local-pi ~/pi-lical-dist/*.tgz   # offline tarballs
+```
+
+Startup diagnostics:
+
+```bash
+PI_TIMING=1 pi --no-session              # per-stage timings on stderr
+PI_TIMING=1 PI_STARTUP_BENCHMARK=1 pi    # init TUI, print timings, exit
+```
+
 ## User Override
 
 If the user's instructions conflict with any rule in this document, ask for explicit confirmation before overriding. Only then execute their instructions.
