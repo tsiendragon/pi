@@ -592,6 +592,8 @@ export function mapStopReason(reason: FinishReason): StopReason {
 		case FinishReason.LANGUAGE:
 		case FinishReason.MALFORMED_FUNCTION_CALL:
 		case FinishReason.UNEXPECTED_TOOL_CALL:
+		// `@google/genai` newer releases add finish reasons; keep tool-call failures on "error"
+		// so the exhaustive `never` default keeps type-checking.
 		case FinishReason.TOO_MANY_TOOL_CALLS:
 		case FinishReason.NO_IMAGE:
 		case FinishReason.MISSING_THOUGHT_SIGNATURE:
