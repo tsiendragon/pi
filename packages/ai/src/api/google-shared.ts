@@ -396,6 +396,9 @@ export function mapStopReason(reason: FinishReason): StopReason {
 		case FinishReason.LANGUAGE:
 		case FinishReason.MALFORMED_FUNCTION_CALL:
 		case FinishReason.UNEXPECTED_TOOL_CALL:
+		// @google/genai 2.21.0 added this enum; map it to "error" alongside the other
+		// tool-call failures so the exhaustive `never` default keeps type-checking.
+		case FinishReason.TOO_MANY_TOOL_CALLS:
 		case FinishReason.NO_IMAGE:
 			return "error";
 		default: {
