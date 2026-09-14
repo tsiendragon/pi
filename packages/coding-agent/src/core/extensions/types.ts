@@ -1118,6 +1118,17 @@ export interface ExtensionUiRequestEvent {
 	closed?: boolean;
 }
 
+/**
+ * A one-way extension notification emitted whenever an extension calls
+ * ctx.ui.notify. It needs no response; channels such as a live-session bridge
+ * may mirror it to a web UI.
+ */
+export interface ExtensionUiNotifyEvent {
+	type: "extension_ui_notify";
+	message: string;
+	notifyType: "info" | "warning" | "error";
+}
+
 /** Fired at the start of each turn */
 export interface TurnStartEvent {
 	type: "turn_start";
@@ -1498,6 +1509,7 @@ export type ExtensionEvent =
 	| UserBashEvent
 	| InputEvent
 	| ExtensionUiRequestEvent
+	| ExtensionUiNotifyEvent
 	| ToolCallEvent
 	| ToolResultEvent;
 
@@ -1739,6 +1751,7 @@ export interface ExtensionAPI {
 	on(event: "ui_prompt_start", handler: ExtensionHandler<UIPromptStartEvent>): () => void;
 	on(event: "ui_prompt_end", handler: ExtensionHandler<UIPromptEndEvent>): () => void;
 	on(event: "extension_ui", handler: ExtensionHandler<ExtensionUiRequestEvent>): () => void;
+	on(event: "extension_ui_notify", handler: ExtensionHandler<ExtensionUiNotifyEvent>): () => void;
 	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): () => void;
 	on(event: "turn_end", handler: ExtensionHandler<TurnEndEvent, TurnEndEventResult>): () => void;
 	on(event: "message_start", handler: ExtensionHandler<MessageStartEvent>): () => void;

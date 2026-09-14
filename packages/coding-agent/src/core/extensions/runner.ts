@@ -589,6 +589,10 @@ export class ExtensionRunner {
 	private wrapUIPromptContext(ui: ExtensionUIContext): ExtensionUIContext {
 		return {
 			...ui,
+			notify: (message, type) => {
+				void this.emit({ type: "extension_ui_notify", message, notifyType: type ?? "info" });
+				ui.notify(message, type);
+			},
 			select: (title, options, opts) =>
 				this.withUIPrompt("select", title, () =>
 					this.requestUi("select", { title, options }, opts, undefined, (signal) =>
