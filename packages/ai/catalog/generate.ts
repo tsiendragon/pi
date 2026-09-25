@@ -210,7 +210,30 @@ async function generateModels(generatorOptions: GeneratorOptions): Promise<void>
 					writeFileSync(join(providersDir, filename), output);
 				}
 				for (const entry of readdirSync(providersDir)) {
-					if (entry.endsWith(".models.ts") && !generatedShardFiles.has(entry)) rmSync(join(providersDir, entry));
+					if (entry.endsWith(".models.ts") && !generatedShardFiles.has(entry)) {
+						// Hand-written provider modules import their generated shard. When the upstream source renames
+						// or drops a provider, the generator loses that provider and would silently delete the shard,
+						// leaving a clean build broken with an unresolved import. Refuse instead.
+						const importedShardFiles = new Set<string>();
+						for (const source of readdirSync(providersDir)) {
+							if (!source.endsWith(".ts") || source.endsWith(".models.ts")) continue;
+							const contents = readFileSync(join(providersDir, source), "utf8");
+							for (const match of contents.matchAll(/from ["']\.\/([a-z0-9-]+)\.models\.ts["']/g)) {
+								importedShardFiles.add(`${match[1]}.models.ts`);
+							}
+						}
+						const orphanedShardFiles = [...importedShardFiles]
+							.filter((candidate) => !generatedShardFiles.has(candidate))
+							.sort();
+						if (orphanedShardFiles.length > 0) {
+							throw new Error(
+								`Generated catalog is missing providers that hand-written code imports: ${orphanedShardFiles.join(", ")}. ` +
+									"Most likely models.dev renamed or dropped the source entry; map the new entry explicitly " +
+									"instead of letting the provider disappear.",
+							);
+						}
+						rmSync(join(providersDir, entry));
+					}
 				}
 
 				let output = generatedHeader;
