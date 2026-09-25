@@ -2222,9 +2222,17 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
-		// Process Kimi For Coding models
-		if (data["kimi-for-coding"]?.models) {
-			const kimiModels = data["kimi-for-coding"].models as Record<string, ModelsDevModel>;
+		// Process Kimi For Coding models. models.dev renamed this provider entry
+		// (kimi-for-coding -> kimi-code-plan-cn / kimi-code-plan-global), so accept every
+		// known key and fail loudly instead of silently dropping the committed shard.
+		const kimiSource = data["kimi-for-coding"] ?? data["kimi-code-plan-cn"] ?? data["kimi-code-plan-global"];
+		if (!kimiSource?.models) {
+			throw new Error(
+				"kimi-coding: models.dev has no entry for kimi-for-coding / kimi-code-plan-cn / kimi-code-plan-global",
+			);
+		}
+		{
+			const kimiModels = kimiSource.models as Record<string, ModelsDevModel>;
 			const hasCanonicalModel = Object.prototype.hasOwnProperty.call(kimiModels, "kimi-for-coding");
 
 			const kimiAliases = new Set(["k2p5", "k2p6", "k2p7"]);
@@ -3009,6 +3017,29 @@ async function generateModels() {
 	if (!generatorOptions.jsonOnly) {
 		// Stage and validate all provider values before replacing the current generated data.
 		const providersDir = join(packageRoot, "src/providers");
+
+		// Hand-written providers (src/providers/*.ts) import their generated shard
+		// (`./<id>.models.ts`). If the catalog no longer contains such a provider, deleting its
+		// shard and data silently breaks those imports (tsgo TS2307) with no hint about the
+		// cause — typically a models.dev rename, e.g. kimi-for-coding -> kimi-code-plan-cn.
+		// Fail loudly instead of shipping a catalog with a provider missing.
+		const generatedShardFiles = new Set(generatedDataProviderIds.map((providerId) => `${providerId}.models.ts`));
+		const importedShardFiles = new Set<string>();
+		for (const entry of readdirSync(providersDir)) {
+			if (!entry.endsWith(".ts") || entry.endsWith(".models.ts")) continue;
+			const source = readFileSync(join(providersDir, entry), "utf8");
+			for (const match of source.matchAll(/from ["']\.\/([a-z0-9-]+)\.models\.ts["']/g)) {
+				importedShardFiles.add(`${match[1]}.models.ts`);
+			}
+		}
+		const orphanedShardFiles = [...importedShardFiles].filter((entry) => !generatedShardFiles.has(entry)).sort();
+		if (orphanedShardFiles.length > 0) {
+			throw new Error(
+				`Generated catalog is missing providers that hand-written code imports: ${orphanedShardFiles.join(", ")}. ` +
+					"Most likely models.dev renamed or dropped the source entry; map the new entry explicitly in " +
+					"scripts/generate-models.ts instead of letting the provider disappear.",
+			);
+		}
 		const dataDir = join(providersDir, "data");
 		const stagingRoot = mkdtempSync(join(providersDir, ".model-generation-"));
 		const stagedDataDir = join(stagingRoot, "data");
