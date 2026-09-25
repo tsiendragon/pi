@@ -1,0 +1,151 @@
+# TSIEN_FORK.md — `tsien` 分支说明
+
+本仓库是 [earendil-works/pi](https://github.com/earendil-works/pi) 的个人分支（fork），承载本机与
+其他几台机器需要的少量补丁，同时保持能定期同步官方上游。
+
+| 项 | 值 |
+|---|---|
+| fork（`origin`） | `git@github.com:tsiendragon/pi.git` |
+| 上游（`upstream`） | `https://github.com/earendil-works/pi.git`（push URL 已设为 `no_push`，防误推） |
+| 基线 | `71dca87`（`v0.85.1-67-g71dca871b`，官方 v0.85.1 之后第 67 个 commit） |
+| 补丁分支 | `tsien`（12 个 commit，最新 `c67d169`） |
+| 版本号 | `0.85.1-tsien.1`（带 `-tsien.N` 后缀，避免与官方包混淆） |
+| 分发方式 | 本地构建的 tgz，作为 GitHub Release 资产（**不发 npm**） |
+
+## 1. 分支与远端布局
+
+| 名称 | 内容 | 规则 |
+|---|---|---|
+| `main` | 上游 `upstream/main` 的纯镜像 | 只 `git merge --ff-only upstream/main`，**不提交** |
+| `tsien` | 基线 + 全部补丁 commit | 所有改动都在这里，靠 `git rebase` 同步上游 |
+| `origin` | 自己的 fork | `remote.pushDefault=origin`，只推这里 |
+| `upstream` | 官方 | 只 fetch；push URL = `no_push` |
+| `rerere.enabled` | `true` | rebase 冲突的解法可复用 |
+
+补丁越少越好：能不提上游的就不写进 `tsien`，能合并成一个 commit 的就不拆。
+
+## 2. 补丁清单（`71dca87..tsien`）
+
+| commit | 作用 |
+|---|---|
+| `1e3f6a13` | `feat(tui)` 扩展独立全屏路由：`custom()` 支持 `fullscreen`，`WidgetPlacement` 新增 `aboveStatus` |
+| `5be1db36` | `feat(extensions)` 安全嵌套工具调用：`ExtensionAPI.executeTool` |
+| `fb4e15a3` | `feat(tui)` 常规 TUI 布局调整 |
+| `6c0be80e` | `feat(extensions)` 多通道 UI 请求总线：`extension_ui` 事件 + `respondExtensionUi` |
+| `c18d5df0` | `feat(coding-agent)` 默认 system prompt（`getDefaultSystemPrompt`） |
+| `1d0b75bc` | `fix(coding-agent)` 紧凑布局下保留编辑器 |
+| `df471722` | `fix(ai)` 把 `@google/genai` 的 `TOO_MANY_TOOL_CALLS` 映射为错误 |
+| `66825672` | `feat(extensions)` `ctx.ui.notify` 投影为 `extension_ui_notify` |
+| `d6122619` | `fix(tui)` 删除未使用的 `os` import |
+| `141fee77` | `docs` 记录本地 pi 安装与 NFS 启动开销（`AGENTS.md`） |
+| `839dd0cf` | `chore(release)` 版本号 `0.85.1-tsien.1`（23 个文件 + shrinkwrap/install-lock 重新生成） |
+| `c67d1690` | `fix(ai)` 数据源改名时不再静默删除仍被引用的 provider 分片（对应上游 issue #10036） |
+
+### 相对官方 npm 包多出的 API（配套扩展依赖，官方至今没有）
+
+| API | 引入 commit | 消费方 |
+|---|---|---|
+| `ExtensionAPI.executeTool` | `5be1db36` | pi-dashboard `ptc.ts`（`run_code`）、subagent-workbench `multi-tool.ts` |
+| `ExtensionAPI.respondExtensionUi` + 事件 `extension_ui` | `6c0be80e` | pi-dashboard `live-session.ts` |
+| 事件 `extension_ui_notify` | `66825672` | pi-dashboard `live-session.ts` |
+| `WidgetPlacement.aboveStatus` | `1e3f6a13` | subagent-workbench `task-navigation.ts` |
+| `custom()` 的 `fullscreen` | `1e3f6a13` | pi-dashboard `conversation-workbench.ts` |
+
+## 3. 构建与发布
+
+### 硬约束：不要跑真实的 `npm run generate:models`
+
+`scripts/local-release.mjs` 会先跑 `npm run generate:models`，它会从 `https://models.dev/api.json`
+**现拉**数据重新生成模型目录（含被 gitignore 的 `packages/ai/src/providers/data/`）。当前线上数据已与
+仓库提交的分片、以及仓库自带测试的断言漂移（例如 `glm-5.2` → `glm-5.3`），会让 `tsgo --noEmit` 失败。
+因此发布构建使用**钉住的同世代目录快照**，并把 `generate:models` 临时改成 no-op：
+
+```bash
+# 1) 临时把 generate:models 变 no-op
+node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync("package.json","utf8"));j.scripts["generate:models"]="true";fs.writeFileSync("package.json",JSON.stringify(j,null,2)+"\n")'
+# 2) 构建（约 2 分钟，产出 10 个 tgz）
+node scripts/local-release.mjs --out ~/pi-local-release-tsien --force --skip-check --skip-test --skip-install
+# 3) 还原
+git checkout -- package.json
+```
+
+`packages/ai/src/providers/data/` 不进版本库。新机器 clone 后若缺这份数据，从已安装的 pi-ai 整份复制：
+
+```bash
+cp -a <prefix>/lib/node_modules/@earendil-works/pi-ai/dist/providers/data/. packages/ai/src/providers/data/
+(cd packages/ai && npm run check:model-data)   # 期望：Generated model data is valid.
+```
+
+### 发布前验证清单（缺一不可）
+
+```bash
+D=~/pi-verify; npm install -g --prefix "$D" ~/pi-local-release-tsien/tarballs/*.tgz
+"$D/bin/pi" --version                                    # 期望 0.85.1-tsien.N
+rg -c executeTool "$D"/lib/node_modules/@earendil-works/pi-coding-agent/dist -g '*.d.ts'
+ls "$D"/lib/node_modules/@earendil-works/pi-ai/dist/providers/data/*.json | wc -l    # 期望 39
+"$D/bin/pi" -p "Use the run_code tool to compute 2+2, then reply with only the numeric result."   # 期望 4
+```
+
+发布后再核对资产完整性：
+
+```bash
+for f in ~/pi-local-release-tsien/tarballs/*.tgz; do
+  b=$(basename "$f")
+  curl -sL -o "/tmp/$b" "https://github.com/tsiendragon/pi/releases/download/<tag>/$b"
+  sha256sum "$f" "/tmp/$b"          # 两个哈希必须一致
+done
+```
+
+## 4. 同步上游
+
+```bash
+git fetch upstream
+git merge --ff-only upstream/main          # 更新 main 镜像
+git rebase upstream/main tsien             # 或 git rebase --onto upstream/main <旧基线> tsien
+```
+
+rebase 后必做：
+
+1. 处理冲突时**修根因**，不要为了少改而放弃补丁语义；`rerere` 会复用上次解法。
+2. **递增版本号**（`-tsien.N`），并按需重新生成 shrinkwrap / install-lock（`npm run check` 会校验）。
+3. 若上游动了 provider 数据或测试：注意上面的数据目录漂移问题，必要时从新版已安装 pi-ai 取同世代数据。
+4. 重新构建 + 走完验证清单，再打**新 tag**（例如 `v0.86.0-tsien.1`）。tag 是构建产物的来源，**不要**移动或强推已发布的 tag。
+5. 提交前 husky 会跑全套 `npm run check`（biome + 9 项检查 + `tsgo --noEmit`），全绿才提交。
+
+## 5. GitHub 写操作用 `tsiendragon` 身份
+
+`git push` 走 SSH（本机 key 已是 `tsiendragon`），**不需要 token**。需要 GitHub API 写操作（提 issue、
+发 Release）时，token 存在 Sekret，注入子进程使用，**不要**打印、导出或持久化 token 值：
+
+```bash
+S=/mnt/workspace/lilong/envs/conda/envs/train/bin/sekret
+"$S" local exec tsien account -- /usr/bin/bash -c \
+  'GH_TOKEN="$GH_TSIEN_TOKEN" gh issue create --repo earendil-works/pi --title "..." --body-file <file>'
+```
+
+要点：vault `account` 里另有 `GITHUB_PR_TOKEN`（另一个账号），所以要显式把 `GH_TOKEN` 指向
+`GH_TSIEN_TOKEN`（`gh` 的优先级是 `GH_TOKEN` > `GITHUB_TOKEN`）。该 token 只需 classic 的
+`public_repo` 权限即可覆盖「给上游提 issue」与「给本 fork 发 Release」，用完请撤销。
+
+## 6. 备份与回滚
+
+| 资产 | 路径 |
+|---|---|
+| 整理前的 16 commit bundle | `/home/tsien/pi-tsien-16commits.bundle` |
+| 整理前的 16 个 patch | `/home/tsien/pi-tsien-patches/` |
+| 整理前的分支 | `backup/feat-tsien-20260925` |
+
+已 drop：`d7b8339 test(tui): drop crash-dump test superseded by clip behavior` —— 上游已用新测试
+重写了同一处行为，保留它只会增加 rebase 冲突。
+
+## 7. 已知未验证项
+
+- 未跑全量 `./test.sh`（只跑了发布所需的针对性验证与 `npm run check`）。
+- 未生成 bun 单文件二进制（本机无 bun）。
+- pi-dashboard 的 live-session 对话框镜像未在真实会话里实跑。
+- `c18d5df0` 引入的 `getDefaultSystemPrompt` 当前无调用方，疑似冗余；删除属行为变更，保留待验证。
+
+## 8. 关联的上游问题
+
+- `c67d1690` 修的是上游 bug（生成器静默删除仍被手写 provider import 的分片），已提：
+  <https://github.com/earendil-works/pi/issues/10036>。若上游合并了等价修复，本条补丁可在 rebase 时移除。
