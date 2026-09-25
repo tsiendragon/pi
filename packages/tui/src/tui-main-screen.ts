@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { ScrollView } from "./components/scroll-view.ts";
 import { getKeybindings } from "./keybindings.ts";
