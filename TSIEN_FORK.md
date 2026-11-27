@@ -177,3 +177,66 @@ S=/mnt/workspace/lilong/envs/conda/envs/train/bin/sekret
 
 - `c67d1690` 修的是上游 bug（生成器静默删除仍被手写 provider import 的分片），已提：
   <https://github.com/earendil-works/pi/issues/10036>。若上游合并了等价修复，本条补丁可在 rebase 时移除。
+### 4.2 已实测：1.6.1-tsien.1 发布构建与 sol 缓存验证（2026-11-27）
+
+**运行时必须是 Node ≥ 22.23。** `packages/ai/scripts/check-model-data.ts` 与
+`catalog/generate.ts` 直接用 Node 原生 TypeScript 类型剥离跑 `.ts`。本机 `/usr/bin/node`
+是 v22.22.1（`process.features.typescript === false`），会在 `build:offline` 的第一步
+`ERR_UNKNOWN_FILE_EXTENSION` 挂掉，`produceArtifactSet` 一个 tgz 都产不出来。把
+`/home/tsien/pi-stack/runtime/node-v22.23.5-linux-x64/bin` 置前 PATH 即可。打包报
+「`.ts` 扩展名未知」时先查这一条，不要去翻依赖或 `files` 配置。
+
+**rebase 时 `chore(release)` 冲突解掉了两个包的元数据。** `packages/mcp/package.json` 丢了
+`name` 与 `description`、`packages/chord/package.json` 丢了 `description`。前者让
+`npm pack` 报 `Invalid package, must have name and version`，打包在 pack 阶段中断（已产出 7 个
+tgz、无 manifest）。rebase 后核对元数据：把每个 `packages/*/package.json` 与
+`upstream/main:` 的同名文件按「除版本号外字段」逐一比对。
+
+**「同世代 provider 数据」的判据是仓库自己的测试，不是 npm 包。** `upstream/main` 已比
+`v1.6.1` tag 前进（例如 `9627ebab8 feat(ai): load Ant Ling models from models.dev`），所以
+官方 `pi-ai@1.6.1` 发布包里的 `dist/providers/data/` 已经比本分支提交的 shard 与测试**旧**：
+用它替换后 `tsc --noEmit` 报 3 处错误（测试写 `Ling-3.1-flash`，官方数据只有 `Ling-2.6-*`）。
+反过来，跑过 `npm run generate:models` 现拉下来的数据与提交的 shard/测试一致，`tsc --noEmit`
+干净。因此本轮的取舍是：**保留同一次现拉得到的生成产物，但落地归档，不再现拉**——判据是可
+复现的（下方命令），不是「有没有联网」。
+
+```bash
+# 判据：数据与提交的 shard/测试同一世代吗？
+(cd packages/ai && npm run check:model-data)   # 结构 + manifest 哈希
+npx tsc --noEmit                               # 类型层真正比对数据与测试断言
+```
+
+`check:model-data` 只校验**结构**（文件集合、`type:id` identity、API 分组、manifest 哈希），
+不校验数值，所以漂移数据和恢复后的数据都能通过它；能不能过 `tsc --noEmit` 才是世代判据。
+
+**发布实测结果（1.6.1-tsien.1，13 个定制 commit 全在）**
+
+| 检查项 | 结果 |
+|---|---|
+| `local-release.mjs --skip-check --skip-test --skip-install` | 11 个 tgz + `manifest.json` |
+| `pi --version`（`~/pi-verify`） | `1.6.1-tsien.1` |
+| `rg executeTool dist -g '*.d.ts'` | 21 处命中（`ExtensionAPI.executeTool` 在 `core/extensions/types.d.ts`） |
+| `pi-ai/dist/providers/data/*.json` | 43 个 provider 分片（+`.manifest.json`） |
+| `pi -p "run_code 2+2"` | `4`（**须用 Node 22.23.5 启动**，否则 Code Mode 沙箱探测失败、`run_code` 被禁用） |
+
+**#12273 缓存命中率 A/B 实测。** 同一会话、`openai-codex/gpt-6.2-sol`、连续 7–8 个短请求，
+读 `message_end` 的 `usage`（`PI_TRACE_DIR` 留 `provider_request` 供结构核对）：
+
+| 侧 | 版本 | payload 顶层 `instructions` | 预热轮命中率（中位数） | 范围 |
+|---|---|---|---|---|
+| 修复前 | 官方 `1.5.2`（`edfe6b2ef` 之前的最近发布） | **有** | **44.46%**（n=15，3 次试验） | 44.32–44.71% |
+| 修复后 | 本分支发布产物 `1.6.1-tsien.1` | **无**，system prompt 是 leading `developer` 项 | **98.03%**（n=7，最终产物）／**97.97%**（n=20，含中间构建） | 95.85–98.48% |
+
+修复前天花板≈44–54%：`instructions` 每轮让 system prompt 失效，只有会话内容可缓存；修复后
+稳定≈98%，剩余 2% 是每轮新增的 user/assistant 增量。稳态单轮规模也印证了原因：system prompt
+约 10.2K token，修复前 `cacheRead` 只覆盖会话增量（~4.6K）、每轮重付 ~5.7K；修复后
+`cacheRead≈10.2K`、每轮只剩 ~200 token 新增。中途整轮 `cacheRead=0` 是服务端缓存
+过期（偶发，两侧都会出现），不代表修复失效。复现脚本：
+
+```bash
+bash scratch/cache-sol.sh <pi-bin> <trace-dir> <session-id> <label>   # 跑 6 个短请求并打印逐轮命中率
+python3 scratch/cache-report.py before=/tmp/a/turns.jsonl fixed=/tmp/b/turns.jsonl
+python3 scratch/payload-account.py <fixed-trace> <before-trace>       # 核对 instructions / developer 放置
+```
+
+注意：验证 `run_code` 与缓存时都要用 `~/pi-verify/bin/pi`，不要把生产 `~/pi-stack/pi` 换掉。
