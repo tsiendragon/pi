@@ -1,5 +1,6 @@
 {
 	"name": "@earendil-works/chord",
+	"description": "Object runtime for apps across processes: contracts, documents, a store, links, plugins with hot reload, HTTP, workers, web and terminal clients",
 	"version": "1.6.1-tsien.1",
 	"type": "module",
 	"main": "./dist/index.js",
