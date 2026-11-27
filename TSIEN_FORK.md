@@ -112,6 +112,34 @@ rebase 后必做：
 4. 重新构建 + 走完验证清单，再打**新 tag**（例如 `v0.86.0-tsien.1`）。tag 是构建产物的来源，**不要**移动或强推已发布的 tag。
 5. 提交前 husky 会跑全套 `npm run check`（biome + 9 项检查 + `tsgo --noEmit`），全绿才提交。
 
+### 4.1 已实测：rebase 到官方 1.6.1（2026-11）
+
+13 个定制 commit 全部重放到 `upstream/main`（1.6.1，含 #12273 缓存修复）。冲突解决留档：
+
+| 定制 commit | 上游变化 | 融合方式 |
+|---|---|---|
+| 扩展全屏路由 | `showExtensionCustom` 重写为对话框栈 + `extensionOverlays` + `programStatus` | fullscreen 分支并入新结构；`ExtensionUICustomOptions` 保留 `fullscreen` 并补入上游 `blocked` 字段 |
+| 安全嵌套工具调用 | 上游另有 `ExtensionToolContext.executeTool`（工具上下文层） | 二者并存：定制的是 `ExtensionAPI.executeTool`（扩展层），签名不同不冲突 |
+| TUI 布局优化 | `Component.render` 返回类型改 `readonly string[]` | 定制代码跟随新签名 |
+| 多通道 UI 请求总线 | `select/confirm/input/editor` 改走对话框栈 | `signal`/abort 逻辑迁移到 `pushExtensionDialog`/`removeExtensionDialog` |
+| 默认 system prompt | 系统提示改为分节结构（`promptSections`） | `defaultSystemPrompt` 改为覆盖 `preamble`，其余分节沿用上游 |
+| 紧凑布局保留 editor | 上游超宽行改为写崩溃日志 + `stop()` + 抛错 | 取折中：写诊断日志后裁剪，不终止会话；两条上游测试改写为新约定 |
+| genai `TOO_MANY_TOOL_CALLS` | 上游已内建该 case | 仅保留说明性注释 |
+| `extension_ui_notify` | 上游 `on()` 返回 `() => void` 且事件更多 | 采用上游签名与事件表，补入 `extension_ui_notify` |
+| providers 重命名保护 | 生成器迁到 `packages/ai/catalog/generate.ts` | 保护逻辑移植到新脚本（保留 shard 删除前的 orphan 检查）|
+| 版本号 `0.85.1-tsien.1` | 上游 1.6.1，且删除了 `client`/`protocol`/`server`/`session-backends` | 版本统一为 `1.6.1-tsien.1`；依赖跟上游（不引入已删包）；`npm-shrinkwrap.json` 与 sandbox 示例接受上游删除 |
+
+本轮新增两个上游没有的提交：
+
+- `fix(ai): keep PI_AI_VERSION in sync with the fork version` —— `scripts/sync-versions.js` 在本仓库会抛错（排序时读到 undefined 的包名），故直接改常量，否则 `identity.test.ts` 失败。
+- `style: apply biome formatting after the rebase` —— 预提交钩子的格式化结果。
+
+已知与上游一致的测试基线：`packages/ai` 的 Anthropic OAuth / E2E 类测试需要真实凭据，上游 main 上同样失败（上游 9 文件 / 26 用例失败，本分支 7 文件 / 24 用例失败）。跑这些包前先 `unset PI_SKIP_VERSION_CHECK`，否则 `version-check.test.ts` 会因早退而假失败。
+
+数据目录提醒：`packages/ai/src/providers/data/` 是 gitignore 的生成产物，干净检出后需先跑
+`cd packages/ai && node catalog/generate.ts --strict`；Node 22.19 自带的类型剥离可能不可用，可改用
+`/home/tsien/pi-stack/runtime/node-v22.23.5-linux-x64/bin/node`。
+
 ## 5. GitHub 写操作用 `tsiendragon` 身份
 
 `git push` 走 SSH（本机 key 已是 `tsiendragon`），**不需要 token**。需要 GitHub API 写操作（提 issue、
