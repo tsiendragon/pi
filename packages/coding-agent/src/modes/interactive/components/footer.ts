@@ -146,7 +146,6 @@ export class FooterViewModelComponent implements Component {
 	}
 }
 
-
 /**
  * Footer component that shows pwd, token stats, and context usage.
  * Computes token/context stats from session, gets git branch and extension statuses from provider.
@@ -307,7 +306,9 @@ export class FooterComponent implements Component {
 		}
 
 		const routed = this.session.routedModel;
-		const routedLabel = routed ? `${routed.model.id}${routed.thinkingLevel ? ` • ${routed.thinkingLevel}` : ""}` : undefined;
+		const routedLabel = routed
+			? `${routed.model.id}${routed.thinkingLevel ? ` • ${routed.thinkingLevel}` : ""}`
+			: undefined;
 
 		return renderFooterViewModel(
 			{

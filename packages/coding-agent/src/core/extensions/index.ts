@@ -72,8 +72,8 @@ export type {
 	EntryRenderOptions,
 	ExecOptions,
 	ExecResult,
-	ExecuteToolOptions,
 	ExecuteToolHandler,
+	ExecuteToolOptions,
 	Extension,
 	ExtensionActions,
 	// API
