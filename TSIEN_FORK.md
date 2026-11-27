@@ -5,7 +5,7 @@
 
 | 项 | 值 |
 |---|---|
-| fork（`origin`） | `git@github.com:tsiendragon/pi.git` |
+| fork（`origin`） | `git@github.com:tsiendragon/pitsien.git` |
 | 上游（`upstream`） | `https://github.com/earendil-works/pi.git`（push URL 已设为 `no_push`，防误推） |
 | 基线 | `71dca87`（`v0.85.1-67-g71dca871b`，官方 v0.85.1 之后第 67 个 commit） |
 | 补丁分支 | `tsien`（12 个 commit，最新 `c67d169`） |
@@ -91,7 +91,7 @@ ls "$D"/lib/node_modules/@earendil-works/pi-ai/dist/providers/data/*.json | wc -
 ```bash
 for f in ~/pi-local-release-tsien/tarballs/*.tgz; do
   b=$(basename "$f")
-  curl -sL -o "/tmp/$b" "https://github.com/tsiendragon/pi/releases/download/<tag>/$b"
+  curl -sL -o "/tmp/$b" "https://github.com/tsiendragon/pitsien/releases/download/<tag>/$b"
   sha256sum "$f" "/tmp/$b"          # 两个哈希必须一致
 done
 ```
